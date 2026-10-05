@@ -1,0 +1,4 @@
+project_id = "REDACTED_SUPABASE_PROJECT_ID"
+
+[functions.daily-pipeline]
+verify_jwt = false

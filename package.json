@@ -1,0 +1,34 @@
+{
+  "name": "youtube-analysis",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "list-streams": "tsx src/list-streams.ts",
+    "batch-process": "tsx src/batch-process.ts",
+    "manage-channels": "tsx src/manage-channels.ts",
+    "trigger-edge": "tsx src/trigger-edge.ts",
+    "pipeline": "tsx src/pipeline.ts",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.1",
+  "dependencies": {
+    "@google/genai": "^2.27.0",
+    "@openrouter/sdk": "^1.4.21",
+    "@supabase/supabase-js": "^2.117.2",
+    "dotenv": "^18.0.5",
+    "googleapis": "^183.0.0",
+    "youtube-transcript": "^1.3.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

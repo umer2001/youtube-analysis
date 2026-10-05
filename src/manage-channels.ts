@@ -41,8 +41,22 @@ async function main() {
     return;
   }
 
-  // Handle --add
   const addIdx = args.indexOf("--add");
+  const disableIdx = args.indexOf("--disable");
+  const enableIdx = args.indexOf("--enable");
+  const isMutating = addIdx !== -1 || disableIdx !== -1 || enableIdx !== -1;
+
+  if (isMutating && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error(`\n⚠️ Missing SUPABASE_SERVICE_ROLE_KEY in .env!`);
+    console.error(`Adding, enabling, or disabling channels requires the Supabase service_role key to bypass Row Level Security (RLS).`);
+    console.error(`👉 Get your service_role key from your Supabase Dashboard:`);
+    console.error(`   https://supabase.com/dashboard/project/REDACTED_SUPABASE_PROJECT_ID/settings/api`);
+    console.error(`   And paste it into .env:`);
+    console.error(`   SUPABASE_SERVICE_ROLE_KEY=eyJ...\n`);
+    process.exit(1);
+  }
+
+  // Handle --add
   if (addIdx !== -1 && args[addIdx + 1]) {
     let channelInput = args[addIdx + 1].trim();
     if (!channelInput.startsWith("http://") && !channelInput.startsWith("https://")) {
@@ -71,7 +85,6 @@ async function main() {
   }
 
   // Handle --disable
-  const disableIdx = args.indexOf("--disable");
   if (disableIdx !== -1 && args[disableIdx + 1]) {
     const id = args[disableIdx + 1];
     const channel = await updateChannel(id, { is_active: false });
@@ -80,7 +93,6 @@ async function main() {
   }
 
   // Handle --enable
-  const enableIdx = args.indexOf("--enable");
   if (enableIdx !== -1 && args[enableIdx + 1]) {
     const id = args[enableIdx + 1];
     const channel = await updateChannel(id, { is_active: true });

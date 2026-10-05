@@ -561,3 +561,22 @@ export async function scrapeChannelStreamsTab(
 
   return { channel, sessions: enrichedSessions };
 }
+
+/**
+ * Fetches comprehensive channel metadata (channelId, title, description, thumbnailUrl)
+ * using YouTube Data API v3 when available, with automatic fallback to scraping.
+ */
+export async function fetchChannelMetadata(identifier: string): Promise<ChannelInfo> {
+  const apiKey = getValidYouTubeApiKey();
+  if (apiKey) {
+    try {
+      const client = getYouTubeClient(apiKey);
+      return await resolveChannel(identifier, client);
+    } catch {
+      // Fallback to scraping
+    }
+  }
+
+  const result = await scrapeChannelStreamsTab(identifier, { maxResults: 1 });
+  return result.channel;
+}

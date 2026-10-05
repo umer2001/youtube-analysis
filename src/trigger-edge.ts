@@ -34,7 +34,7 @@ async function main() {
   }
 
   console.log(`✅ Edge Function Execution Succeeded!`);
-  console.log(JSON.stringify(data.report, null, 2));
+  console.log(JSON.stringify(data.report || data, null, 2));
 }
 
 main().catch((err) => {

@@ -2,7 +2,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { corsHeaders } from "./_shared/cors.ts";
 import { createAdminClient } from "./_shared/supabase.ts";
 import { fetchCompletedLivestreams } from "./_shared/youtube.ts";
-import { getFormattedTranscript } from "./_shared/transcript.ts";
+import {
+  getFormattedTranscript,
+  extractCaptionTracks,
+} from "./_shared/transcript.ts";
 import {
   buildTradeExtractionPrompt,
   createBatch,
@@ -38,6 +41,163 @@ Deno.serve(async (req: Request) => {
       timestamp: new Date().toISOString(),
       action,
     };
+
+    if (action === "debug_transcript") {
+      const videoId = url.searchParams.get("videoId") || "HX3IEaRCeDE";
+      const results: Record<string, any> = { videoId };
+
+      const INNERTUBE_API_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
+      const INNERTUBE_CLIENT_VERSION = "20.10.38";
+      const innertubeBody = JSON.stringify({
+        context: {
+          client: {
+            clientName: "ANDROID",
+            clientVersion: INNERTUBE_CLIENT_VERSION,
+          },
+        },
+        videoId,
+      });
+      const INNERTUBE_USER_AGENT = `com.google.android.youtube/${INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
+      const TIMEDTEXT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36,gzip(gfe)";
+
+      // Test 1: Direct InnerTube from Supabase
+      try {
+        const resp = await fetch(INNERTUBE_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": INNERTUBE_USER_AGENT,
+          },
+          body: innertubeBody,
+        });
+        const status = resp.status;
+        const text = await resp.text();
+        let data: any = null;
+        try { data = JSON.parse(text); } catch {}
+        const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        results.direct_innertube = {
+          status,
+          hasTracks: Array.isArray(tracks) && tracks.length > 0,
+          tracksCount: tracks?.length ?? 0,
+          firstTrackUrl: tracks?.[0]?.baseUrl ?? null,
+          playabilityStatus: data?.playabilityStatus?.status ?? null,
+          snippet: text.slice(0, 300),
+        };
+
+        if (tracks?.[0]?.baseUrl) {
+          const trackResp = await fetch(tracks[0].baseUrl, {
+            headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
+          });
+          const xml = await trackResp.text();
+          results.direct_innertube_timedtext = {
+            status: trackResp.status,
+            len: xml.length,
+            isXml: xml.includes("<timedtext") || xml.includes("<p t="),
+            snippet: xml.slice(0, 200),
+          };
+        }
+      } catch (err: any) {
+        results.direct_innertube = { error: err.message || String(err) };
+      }
+
+      // Test 2: InnerTube via Webshare Proxies
+      results.proxy_innertube = [];
+      const testProxies = [
+        "REDACTED_PROXY_URL",
+        "REDACTED_PROXY_URL",
+        "REDACTED_PROXY_URL",
+      ];
+
+      for (const pUrl of testProxies) {
+        const proxyLabel = pUrl.split("@")[1];
+        try {
+          const client = typeof (Deno as any).createHttpClient === "function"
+            ? (Deno as any).createHttpClient({ proxy: { url: pUrl } })
+            : undefined;
+
+          const pResp = await fetch(INNERTUBE_API_URL, {
+            ...(client ? { client } : {}),
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": INNERTUBE_USER_AGENT,
+            },
+            body: innertubeBody,
+          });
+          const pStatus = pResp.status;
+          const pText = await pResp.text();
+          let pData: any = null;
+          try { pData = JSON.parse(pText); } catch {}
+          const pTracks = pData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+          let timedTextResult: any = null;
+          if (pTracks?.[0]?.baseUrl) {
+            // Test downloading timedtext via proxy
+            const dlResp = await fetch(pTracks[0].baseUrl, {
+              ...(client ? { client } : {}),
+              headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
+            });
+            const dlText = await dlResp.text();
+            timedTextResult = {
+              status: dlResp.status,
+              len: dlText.length,
+              isXml: dlText.includes("<timedtext") || dlText.includes("<p t="),
+              snippet: dlText.slice(0, 200),
+            };
+          }
+
+          results.proxy_innertube.push({
+            proxy: proxyLabel,
+            status: pStatus,
+            hasTracks: Array.isArray(pTracks) && pTracks.length > 0,
+            playabilityStatus: pData?.playabilityStatus?.status ?? null,
+            firstTrackUrl: pTracks?.[0]?.baseUrl ? "found" : null,
+            timedTextResult,
+            snippet: pText.slice(0, 200),
+          });
+        } catch (pErr: any) {
+          results.proxy_innertube.push({
+            proxy: proxyLabel,
+            error: pErr.message || String(pErr),
+          });
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true, report: results }, null, 2), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "debug_proxy") {
+      const debugInfo: any = {};
+      const proxyUrl = "REDACTED_PROXY_URL";
+      debugInfo.hasCreateHttpClient = typeof (Deno as any).createHttpClient === "function";
+      debugInfo.hasDenoConnect = typeof (Deno as any).connect === "function";
+
+      if (debugInfo.hasCreateHttpClient) {
+        try {
+          const client = (Deno as any).createHttpClient({ proxy: { url: proxyUrl } });
+          const res = await fetch("http://ipv4.webshare.io/", { client });
+          debugInfo.createHttpClientResult = await res.text();
+        } catch (err: any) {
+          debugInfo.createHttpClientError = err.message || String(err);
+        }
+      }
+
+      if (debugInfo.hasDenoConnect) {
+        try {
+          const conn = await (Deno as any).connect({ hostname: "REDACTED_PROXY_IP", port: 6095 });
+          debugInfo.rawTcpConnected = true;
+          conn.close();
+        } catch (err: any) {
+          debugInfo.rawTcpError = err.message || String(err);
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true, debug: debugInfo }, null, 2), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // =========================================================================
     // STEP 1: SYNC CHANNELS (Find completed streams)

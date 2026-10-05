@@ -130,20 +130,42 @@ Deno.serve(async (req: Request) => {
           try { pData = JSON.parse(pText); } catch {}
           const pTracks = pData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
-          let timedTextResult: any = null;
+          let timedTextProxyResult: any = null;
+          let timedTextDirectResult: any = null;
+
           if (pTracks?.[0]?.baseUrl) {
-            // Test downloading timedtext via proxy
-            const dlResp = await fetch(pTracks[0].baseUrl, {
-              ...(client ? { client } : {}),
-              headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
-            });
-            const dlText = await dlResp.text();
-            timedTextResult = {
-              status: dlResp.status,
-              len: dlText.length,
-              isXml: dlText.includes("<timedtext") || dlText.includes("<p t="),
-              snippet: dlText.slice(0, 200),
-            };
+            // 1. Test downloading timedtext via proxy
+            try {
+              const dlResp = await fetch(pTracks[0].baseUrl, {
+                ...(client ? { client } : {}),
+                headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
+              });
+              const dlText = await dlResp.text();
+              timedTextProxyResult = {
+                status: dlResp.status,
+                len: dlText.length,
+                isXml: dlText.includes("<timedtext") || dlText.includes("<p t="),
+                snippet: dlText.slice(0, 200),
+              };
+            } catch (dlErr: any) {
+              timedTextProxyResult = { error: dlErr.message || String(dlErr) };
+            }
+
+            // 2. Test downloading timedtext DIRECT from Supabase (clean egress)
+            try {
+              const directResp = await fetch(pTracks[0].baseUrl, {
+                headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
+              });
+              const directText = await directResp.text();
+              timedTextDirectResult = {
+                status: directResp.status,
+                len: directText.length,
+                isXml: directText.includes("<timedtext") || directText.includes("<p t="),
+                snippet: directText.slice(0, 200),
+              };
+            } catch (dErr: any) {
+              timedTextDirectResult = { error: dErr.message || String(dErr) };
+            }
           }
 
           results.proxy_innertube.push({
@@ -152,7 +174,8 @@ Deno.serve(async (req: Request) => {
             hasTracks: Array.isArray(pTracks) && pTracks.length > 0,
             playabilityStatus: pData?.playabilityStatus?.status ?? null,
             firstTrackUrl: pTracks?.[0]?.baseUrl ? "found" : null,
-            timedTextResult,
+            timedTextProxyResult,
+            timedTextDirectResult,
             snippet: pText.slice(0, 200),
           });
         } catch (pErr: any) {
@@ -161,6 +184,21 @@ Deno.serve(async (req: Request) => {
             error: pErr.message || String(pErr),
           });
         }
+      }
+
+      // Test 3: Test full getFormattedTranscript pipeline function
+      try {
+        const transcriptResult = await getFormattedTranscript(videoId);
+        results.getFormattedTranscriptTest = {
+          success: true,
+          totalChunks: transcriptResult.totalChunks,
+          sample: transcriptResult.formattedText.slice(0, 300),
+        };
+      } catch (tErr: any) {
+        results.getFormattedTranscriptTest = {
+          success: false,
+          error: tErr.message || String(tErr),
+        };
       }
 
       return new Response(JSON.stringify({ ok: true, report: results }, null, 2), {

@@ -27,4 +27,7 @@ _.suo
 _.ntvs_
 _.njsproj
 _.sln
-\*.sw?
+*.sw?
+
+# Firebase cache
+.firebase/

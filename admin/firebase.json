@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "yt-analysis",
+    "target": "admin",
     "public": "dist",
     "ignore": [
       "firebase.json",

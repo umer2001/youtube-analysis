@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "REDACTED_FIREBASE_PROJECT_ID"
-  }
+  },
+  "targets": {
+    "REDACTED_FIREBASE_PROJECT_ID": {
+      "hosting": {
+        "admin": [
+          "yt-analysis"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

@@ -85,4 +85,5 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 }}
           channelId: live
           projectId: REDACTED_FIREBASE_PROJECT_ID
+          target: admin
           entryPoint: ./admin

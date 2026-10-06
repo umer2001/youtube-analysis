@@ -13,7 +13,7 @@ export const ExtractedTradeSchema = z.object({
 });
 
 export const TradeReportSchema = z.object({
-  trades: z.array(ExtractedTradeSchema).describe("List of trades executed or discussed in the session"),
+  trades: z.array(ExtractedTradeSchema).describe("List of trades executed in the session"),
 });
 
 export type ExtractedTrade = z.infer<typeof ExtractedTradeSchema>;

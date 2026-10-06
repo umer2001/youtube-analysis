@@ -77,29 +77,14 @@ jobs:
       - name: Build frontend
         run: pnpm --dir admin build
         env:
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || secrets.VITE_SUPABASE_URL || 'https://REDACTED_SUPABASE_PROJECT_ID.supabase.co' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || 'REDACTED_SUPABASE_ANON_KEY' }}
+          VITE_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_ID || 'REDACTED_SUPABASE_PROJECT_ID' }}.supabase.co
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'REDACTED_SUPABASE_ANON_KEY' }}
 
-      - name: Deploy to Firebase Hosting (Service Account)
-        if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 != '' || secrets.FIREBASE_SERVICE_ACCOUNT != '' }}"
+      - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 || secrets.FIREBASE_SERVICE_ACCOUNT }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 }}
           channelId: live
-          projectId: ${{ env.FIREBASE_PROJECT_ID }}
+          projectId: REDACTED_FIREBASE_PROJECT_ID
           entryPoint: ./admin
-
-      - name: Deploy to Firebase Hosting (Token Fallback)
-        if: "${{ (secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 == '' && secrets.FIREBASE_SERVICE_ACCOUNT == '') && secrets.FIREBASE_TOKEN != '' }}"
-        run: |
-          npx -y firebase-tools@latest deploy --only hosting --project "$FIREBASE_PROJECT_ID" --token "$FIREBASE_TOKEN" --non-interactive
-        working-directory: admin
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-
-      - name: Verify Credentials Configured
-        if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 == '' && secrets.FIREBASE_SERVICE_ACCOUNT == '' && secrets.FIREBASE_TOKEN == '' }}"
-        run: |
-          echo "::error::Neither FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 (recommended) nor FIREBASE_TOKEN secret is configured in GitHub repository secrets. Please configure your Firebase service account secret in your GitHub repository."
-          exit 1

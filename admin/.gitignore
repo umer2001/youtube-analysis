@@ -31,3 +31,4 @@ _.sln
 
 # Firebase cache
 .firebase/
+.agents/

@@ -1,4 +1,4 @@
-name: Deploy to Supabase
+name: Deploy
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
-    name: Deploy Migrations & Edge Functions
+  deploy-supabase:
+    name: Deploy Supabase (Migrations & Functions)
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -45,3 +45,61 @@ jobs:
           fi
           supabase db push --password "$SUPABASE_DB_PASSWORD"
           supabase functions deploy daily-pipeline --no-verify-jwt
+
+  deploy-frontend:
+    name: Deploy Admin to Firebase Hosting
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    env:
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'REDACTED_FIREBASE_PROJECT_ID' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: 'admin/pnpm-lock.yaml'
+
+      - name: Install dependencies
+        run: pnpm --dir admin install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --dir admin build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || secrets.VITE_SUPABASE_URL || 'https://REDACTED_SUPABASE_PROJECT_ID.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || 'REDACTED_SUPABASE_ANON_KEY' }}
+
+      - name: Deploy to Firebase Hosting (Service Account)
+        if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 != '' || secrets.FIREBASE_SERVICE_ACCOUNT != '' }}"
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 || secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId: live
+          projectId: ${{ env.FIREBASE_PROJECT_ID }}
+          entryPoint: ./admin
+
+      - name: Deploy to Firebase Hosting (Token Fallback)
+        if: "${{ (secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 == '' && secrets.FIREBASE_SERVICE_ACCOUNT == '') && secrets.FIREBASE_TOKEN != '' }}"
+        run: |
+          npx -y firebase-tools@latest deploy --only hosting --project "$FIREBASE_PROJECT_ID" --token "$FIREBASE_TOKEN" --non-interactive
+        working-directory: admin
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+
+      - name: Verify Credentials Configured
+        if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 == '' && secrets.FIREBASE_SERVICE_ACCOUNT == '' && secrets.FIREBASE_TOKEN == '' }}"
+        run: |
+          echo "::error::Neither FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 (recommended) nor FIREBASE_TOKEN secret is configured in GitHub repository secrets. Please configure your Firebase service account secret in your GitHub repository."
+          exit 1

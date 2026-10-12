@@ -12,6 +12,7 @@
     "trigger-edge": "tsx src/trigger-edge.ts",
     "pipeline": "tsx src/pipeline.ts",
     "live-test": "tsx src/live-test.ts",
+    "supabase": "supabase",
     "build": "tsc"
   },
   "keywords": [],
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
+    "supabase": "^2.120.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

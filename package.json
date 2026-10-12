@@ -11,6 +11,7 @@
     "manage-channels": "tsx src/manage-channels.ts",
     "trigger-edge": "tsx src/trigger-edge.ts",
     "pipeline": "tsx src/pipeline.ts",
+    "live-test": "tsx src/live-test.ts",
     "build": "tsc"
   },
   "keywords": [],

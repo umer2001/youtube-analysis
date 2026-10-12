@@ -26,12 +26,18 @@ Deno.serve(async (req: Request) => {
 
     let action = url.searchParams.get("action") || "all";
     let modelOverride = url.searchParams.get("model") || undefined;
+    let limit = parseInt(url.searchParams.get("limit") || url.searchParams.get("maxBatchSize") || "2", 10);
+    if (isNaN(limit) || limit <= 0) limit = 2;
 
     if (req.method === "POST") {
       try {
         const body = await req.json();
         if (body.action) action = body.action;
         if (body.model) modelOverride = body.model;
+        if (body.limit !== undefined || body.maxBatchSize !== undefined) {
+          const parsed = parseInt(body.limit ?? body.maxBatchSize, 10);
+          if (!isNaN(parsed) && parsed > 0) limit = parsed;
+        }
       } catch {
         // use query params or defaults
       }
@@ -304,12 +310,12 @@ Deno.serve(async (req: Request) => {
         .select("*")
         .eq("stream_status", "completed")
         .eq("processing_status", "unprocessed")
-        .limit(15);
+        .limit(limit);
 
       if (unprocErr) throw unprocErr;
 
       if (!unprocessed || unprocessed.length === 0) {
-        report.submit = { status: "no_streams", submittedCount: 0 };
+        report.submit = { status: "no_streams", submittedCount: 0, batchSizeLimit: limit };
       } else {
         const requests: BatchRequestItem[] = [];
         const validVideoIds: string[] = [];

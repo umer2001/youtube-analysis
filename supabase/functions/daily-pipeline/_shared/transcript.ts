@@ -180,6 +180,7 @@ export async function getFormattedTranscript(videoUrlOrId: string): Promise<{
         const resp = await fetch(trackUrl, {
           ...(c ? { client: c } : {}),
           headers: { "User-Agent": TIMEDTEXT_UA },
+          signal: AbortSignal.timeout(5000),
         });
         if (resp.ok) {
           const xml = await resp.text();
@@ -193,8 +194,9 @@ export async function getFormattedTranscript(videoUrlOrId: string): Promise<{
     return null;
   }
 
-  // Method 1: InnerTube API via rotating proxies
-  for (const proxyUrl of proxies) {
+  // Method 1: InnerTube API via rotating proxies (cap to 3 to stay within serverless execution limits)
+  const innertubeProxies = proxies.slice(0, 3);
+  for (const proxyUrl of innertubeProxies) {
     try {
       const client = typeof (Deno as any).createHttpClient === "function"
         ? (Deno as any).createHttpClient({ proxy: { url: proxyUrl } })
@@ -208,6 +210,7 @@ export async function getFormattedTranscript(videoUrlOrId: string): Promise<{
           "User-Agent": INNERTUBE_USER_AGENT,
         },
         body: innertubeBody,
+        signal: AbortSignal.timeout(6000),
       });
 
       if (!resp.ok) continue;
@@ -239,6 +242,7 @@ export async function getFormattedTranscript(videoUrlOrId: string): Promise<{
         "User-Agent": INNERTUBE_USER_AGENT,
       },
       body: innertubeBody,
+      signal: AbortSignal.timeout(5000),
     });
 
     if (resp.ok) {
@@ -260,8 +264,9 @@ export async function getFormattedTranscript(videoUrlOrId: string): Promise<{
     // Continue
   }
 
-  // Method 3: Watch page scraping via rotating proxies
-  for (const proxyUrl of proxies) {
+  // Method 3: Watch page scraping via rotating proxies (fallback, cap to 2)
+  const watchProxies = proxies.slice(0, 2);
+  for (const proxyUrl of watchProxies) {
     try {
       const client = typeof (Deno as any).createHttpClient === "function"
         ? (Deno as any).createHttpClient({ proxy: { url: proxyUrl } })
@@ -274,6 +279,7 @@ export async function getFormattedTranscript(videoUrlOrId: string): Promise<{
           "Accept-Language": "en-US,en;q=0.9",
           Cookie: "PREF=hl=en&gl=US",
         },
+        signal: AbortSignal.timeout(6000),
       });
 
       if (!pageResp.ok) continue;

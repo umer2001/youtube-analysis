@@ -2,13 +2,16 @@
 
 ## 1. Executive Summary & Vision
 
-The objective of this system is to transition from **post-stream batch analysis** to **real-time live stream monitoring**, alerting the user via **instant push notification (e.g., Telegram / Discord)** within **15 to 30 seconds** of a trading streamer announcing, planning, or executing a live trade setup.
+The objective of this system is to transition from **post-stream batch analysis** to **real-time live stream monitoring**, alerting the user via **instant push notification (e.g., Telegram / Discord / FCM)** within **sub-minute latency** of a trading streamer announcing, planning, or executing a live trade setup.
 
 ### Core Targets
-* **End-to-End Alert Latency**: ≤ 30 seconds from spoken call to phone notification.
+* **End-to-End Alert Latency**: Sub-30s from spoken call to push notification.
 * **Extraction Quality**: High-fidelity detection of Asset/Ticker, Direction (`LONG`/`SHORT`), Entry Price, Stop Loss, Take Profit, and Context/Rationale.
-* **Deduplication**: Intelligent session state tracking to prevent repeated alert spam for the same trade.
-* **Cost Efficiency**: ≤ $0.15 in AI inference per 3-hour live streaming session.
+* **Dual Inference Architecture**:
+  * **Primary (Option C)**: Gemini Multimodal Live API (`ai.live.connect` via WebSockets) with real-time PCM audio streaming and sub-second tool execution.
+  * **Secondary / Fallback (Option A)**: Sliding rolling audio chunks (20-25s window evaluated every 10-12s) to Gemini Flash (`ai.models.generateContent`).
+* **Deduplication**: Intelligent session state tracking to prevent repeated alert spam for the same floating position.
+* **Zero YouTube API Quota Usage**: HTTP redirect probing against channel `/live` endpoints to eliminate API quota exhaustion.
 
 ---
 
@@ -16,202 +19,166 @@ The objective of this system is to transition from **post-stream batch analysis*
 
 ```mermaid
 flowchart TD
-    subgraph Stream_Detection ["1. Stream Detection"]
-        Ch[Tracked Channels] -->|Poll every 60s| Poller[Live Status Detector]
-        Poller -->|Stream is LIVE| Trigger[Spawn Session Worker]
+    subgraph Stream_Detection ["1. Stream Detection (Zero-Quota)"]
+        Ch[Tracked Channels] -->|HTTP HEAD /live every 60s| Poller[Live Status Detector]
+        Poller -->|Redirects to /watch?v=ID| Trigger[Spawn Session Worker]
     end
 
     subgraph Audio_Ingestion ["2. Real-Time Audio Pipeline"]
-        Trigger --> YTDLP["yt-dlp HLS Audio Stream Listener"]
-        YTDLP -->|Continuous Audio Stream| Chunker["Rolling Audio Chunker (45-60s Window, 15s Overlap)"]
+        Trigger --> YTDLP["yt-dlp HLS Stream Resolver"]
+        YTDLP -->|Direct Stream URL| FFMPEG["ffmpeg Transcoder (-re -acodec pcm_s16le -ar 16000 -ac 1)"]
+        FFMPEG -->|Continuous 16kHz PCM| Tap["AudioTap Engine"]
     end
 
-    subgraph AI_Inference ["3. AI Analysis & Detection"]
-        Chunker -->|Audio Buffer| GeminiFlash["Gemini Flash (@google/genai Audio Inference)"]
-        GeminiFlash -->|Structured JSON| Parser["Trade Signal Validator & Confidence Filter"]
+    subgraph Dual_AI_Inference ["3. Dual AI Inference Engine"]
+        Tap --> ModeChoice{Inference Mode}
+        ModeChoice -->|Primary: Option C| LiveWS["Gemini Multimodal Live API (WebSocket)"]
+        ModeChoice -->|Secondary: Option A| Chunker["Sliding Window Buffer (25s Ring Buffer)"]
+        Chunker --> FlashGen["Gemini Flash Audio Inference"]
+        LiveWS -->|Tool Call: report_live_trade_signal| Parser["Trade Signal Validator"]
+        FlashGen -->|Structured JSON Output| Parser
     end
 
-    subgraph State_Deduplication ["4. State & Deduplication"]
-        Parser --> StateCheck{"New Setup or Legitimate Update?"}
+    subgraph State_Deduplication ["4. State Machine & Deduplication"]
+        Parser --> StateCheck{"State Machine: New or Repeat?"}
         StateCheck -->|Duplicate / Re-mention| Suppress["Suppress / Update Running State"]
-        StateCheck -->|Valid New Trade / Actionable Update| Dispatcher["Notification Dispatcher"]
+        StateCheck -->|Valid New Entry / Actionable SL Update / Exit| Dispatcher["Notification Dispatcher"]
     end
 
-    subgraph Output_Persistence ["5. Delivery & Persistence"]
-        Dispatcher -->|Instant Push| Telegram["Telegram Bot (Instant Phone Alert)"]
-        Dispatcher -->|Store Realtime Alert| Supabase[("Supabase DB (trades & alerts)")]
+    subgraph Delivery_Persistence ["5. Delivery & Persistence"]
+        Dispatcher -->|Terminal Alert Card| Console["Terminal Console (ANSI Cards)"]
+        Dispatcher -->|Instant Push| Telegram["Telegram Bot API (Phone / Watch Alert)"]
+        Dispatcher -->|Persist Alert Row| Supabase[("Supabase DB (public.alerts)")]
     end
 ```
 
 ---
 
-## 3. Detailed Component Architecture
+## 3. Core Component Architecture
 
-### Component 1: Live Status Poller (`src/services/live/stream-detector.ts`)
-* **Purpose**: Detect when tracked channels start streaming without exhausting YouTube API quotas.
+### Component 1: Zero-Quota Live Status Detector
+* **Problem**: Calling YouTube Data API `search.list(eventType=live)` costs **100 quota units per call**. Polling 4 channels every 60s costs 24,000 units/hr, depleting the 10,000 daily quota in 25 minutes.
 * **Mechanism**:
-  * Lightweight check against YouTube's live channel endpoints (`https://www.youtube.com/@ChannelName/live`) or YouTube Data API `search.list(eventType=live)`.
-  * Scheduled to run every 60 seconds during the channels' known active hours:
-    * **Trade Like Malika**: Weekdays, 07:30 – 11:30 UTC.
-    * **ICT ENIGMA**: Weekends & Friday, 11:00 – 18:00 UTC.
-    * **Booming Bulls**: Weekdays, 12:00 – 16:30 UTC.
-    * **Umar Punjabi Live**: Weekdays, 12:30 – 15:30 UTC.
+  * Probes `https://www.youtube.com/@ChannelHandle/live` using lightweight HTTP `HEAD` / `GET` requests with redirect following.
+  * If offline: redirects to channel home or returns 404 / canonical video page.
+  * If live: redirects to `https://www.youtube.com/watch?v={LIVE_VIDEO_ID}` (Status 303/200).
+  * **Cost: 0 YouTube Data API quota units**.
 
 ### Component 2: Audio Stream Ingestion (`src/services/live/audio-tap.ts`)
-* **Why Audio Instead of Video**:
-  * Video processing (OCR / frame extraction) is compute-heavy, bandwidth-intensive, and introduces multi-minute latencies.
-  * Streamers always **speak their intent aloud** before or as they execute (*"Taking a short at 4185, stop above high at 4188"*).
-* **Implementation**:
-  * Uses `yt-dlp` to resolve the live HLS stream URL (`.m3u8`).
-  * Pipes the live audio track via `ffmpeg` into sliding memory buffers:
-    * **Chunk Duration**: 45 to 60 seconds.
-    * **Overlap**: 15 seconds (ensures trade calls that span a boundary are never chopped in half).
+* **Binary Discovery**: Automatically resolves `yt-dlp` and `ffmpeg` in system `PATH` and WinGet installation directories (`LOCALAPPDATA\Microsoft\WinGet\Packages`).
+* **Stream Resolution**: Uses `yt-dlp -g -f bestaudio/best <URL>` to extract the raw live HLS stream URL.
+* **PCM Streaming**: Spawns `ffmpeg -re -i <STREAM_URL> -vn -acodec pcm_s16le -ar 16000 -ac 1 -f s16le -`.
+* **Output**: Streams raw 16kHz 16-bit mono PCM bytes (32,000 bytes/sec) directly into memory pipes.
 
-### Component 3: Low-Latency AI Extraction (`src/services/live/audio-analyzer.ts`)
-* **Engine**: Google Gemini 2.0 / 1.5 Flash (`@google/genai`).
-* **Input**: Native raw audio chunks (`audio/mp3` or `audio/wav`).
-* **Prompt Strategy**: Low-latency, strict JSON schema output.
-* **Schema Contract**:
-  ```typescript
-  interface LiveTradeDetectionResult {
-    has_trade_action: boolean; // true if an entry, planned order, or exit occurred
-    trade_type: "NEW_ENTRY" | "PENDING_ORDER" | "SL_TP_UPDATE" | "EXIT" | "NONE";
-    symbol: string | null;      // e.g. "XAUUSD", "BTC", "NQ"
-    side: "LONG" | "SHORT" | null;
-    entry_price: string | null;
-    stop_loss: string | null;
-    take_profit: string | null;
-    risk_reward: string | null;
-    rationale: string | null;
-    confidence: "HIGH" | "MEDIUM" | "LOW";
-    verbatim_quote: string | null;
-  }
-  ```
-* **Guardrails**:
-  * Explicit instructions to ignore past recap commentary (*"Yesterday I took..."*) or hypothetical thoughts (*"If it drops 500 points maybe next week..."*).
-  * Only triggers if `has_trade_action === true` and `confidence !== 'LOW'`.
+### Component 3: Dual AI Inference Engine
 
-### Component 4: Deduplication & Session State Engine (`src/services/live/state-manager.ts`)
-* Streamers frequently talk about an open trade for 10–20 minutes while it floats.
-* **Deduplication Rules**:
-  1. Maintain an in-memory session cache: `active_trades = Map<symbol, LastKnownTrade>`.
-  2. If a new detection matches the active symbol and direction within a **15-minute sliding window**, compare parameters:
-     * If entry, SL, and TP are unchanged: **Suppress notification**.
-     * If the streamer announces *"Moving SL to breakeven/cost"* or *"Booking 50% partial profit"*: Dispatch a **"Trade Update"** alert rather than a new trade alert.
-  3. Evict trades when an explicit `EXIT` action is detected or after 60 minutes without update.
+#### Primary: Option C (Gemini Multimodal Live WebSocket API)
+* **Client**: `src/services/live/gemini-live-client.ts`
+* **Model**: `gemini-3.1-flash-live-preview` or `gemini-3.8-live`.
+* **Interface**: `ai.live.connect` with bidirectional audio streaming.
+* **Mechanism**:
+  * Pushes real-time PCM audio slices (`32,000 bytes` / ~1s) via `session.sendRealtimeInput({ media: { mimeType: 'audio/pcm;rate=16000', data } })`.
+  * Configures structured function declaration `report_live_trade_signal`.
+  * When Gemini hears an entry, SL modification, or exit, it calls `report_live_trade_signal` in real-time.
+  * The client acknowledges the tool call immediately to keep the connection streaming without pause.
 
-### Component 5: Instant Notification Engine (`src/services/notifications/telegram.ts`)
-* **Provider**: Telegram Bot API (`https://api.telegram.org/bot<TOKEN>/sendMessage`).
-* **Why Telegram**:
-  * Zero cost, 100% delivery reliability, sub-second delivery to mobile devices and smartwatches.
-  * Native Markdown formatting, action buttons, and direct link preview.
-* **Notification Template**:
-  ```markdown
-  🚨 *LIVE TRADE ALERT*
-  ━━━━━━━━━━━━━━━━━━━━━
-  👤 *Trader*: Trade Like Malika
-  🎯 *Asset*: Gold (XAUUSD)
-  📉 *Action*: *SHORT*
-  📍 *Entry*: `~4185.50`
-  🛑 *Stop Loss*: `4188.00` (~25 pips)
-  🎯 *Take Profit*: `4175.00` (~105 pips)
-  ⚖️ *R:R*: `1 : 4.2`
-  ━━━━━━━━━━━━━━━━━━━━━
-  💡 *Setup*: "Retest of broken support zone after sweep of day high"
-  ⏱️ *Stream Time*: ~01:17:15
-  🔗 [Watch Live Stream Now](https://youtube.com/watch?v=VIDEO_ID)
-  ```
+#### Secondary / Fallback: Option A (Rolling Audio Chunks)
+* **Client**: `src/services/live/gemini-chunk-client.ts`
+* **Model**: `gemini-3.8-flash`.
+* **Mechanism**:
+  * Maintains a rolling ring buffer of 20–25 seconds of audio.
+  * Every 10–12 seconds, wraps the buffer in a valid 44-byte WAV header in-memory and dispatches to `ai.models.generateContent`.
+  * Injects rolling session context notes to prevent "naked entry" detection loss when the asset symbol was spoken in an earlier chunk.
+
+### Component 4: State Machine & Deduplication (`src/services/live/state-manager.ts`)
+* **State Store**: Tracks active trades per symbol (`activeTrades = Map<symbol, ActiveTradeState>`).
+* **Debounce Rules**:
+  1. **New Setup**: If no trade exists for symbol in the last 15 minutes, emits `NEW` trade alert.
+  2. **Active Position Chatter**: If the streamer is reiterating the same trade with matching direction and parameters, marks `SUPPRESSED`.
+  3. **Trade Modification**: If SL/TP is adjusted (e.g. "Move stop loss to breakeven"), emits `UPDATE` alert.
+  4. **Exit**: If streamer says "Closed position" or "Took profit", emits `EXIT` alert and removes from active map.
+
+### Component 5: Dispatcher & Delivery (`src/services/notifications/alert-dispatcher.ts`)
+* **Multi-Channel Adapter Pattern**: Decoupled, extensible channel architecture (`NotificationChannel` interface) executing concurrent dispatch with `Promise.allSettled()`.
+* **Terminal**: High-contrast ANSI-formatted cards with side colors (Green for LONG, Red for SHORT), metrics, rationale, and quote.
+* **Pushover** (`pushover-channel.ts`): Sub-second native push alerts directly to iOS, Android, Apple Watch, and Desktop:
+  * Dynamic sound effects: `'cashregister'` on profit/exit, `'incoming'` on entry, `'intermission'` on adjustments.
+  * Priority mapping: Priority `1` (High, bypasses do-not-disturb/quiet hours) on live entries & exits; Priority `0` on minor updates.
+  * Direct stream links and rich HTML formatting.
+* **Telegram** (`telegram-channel.ts`): Push notifications via Telegram Bot API using `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`.
 
 ---
 
-## 4. Database Schema Extensions
+## 4. CLI Test Runner (`src/live-test.ts`)
 
-To store and audit real-time alerts alongside historical batch data, extend Supabase with an `alerts` table:
+The system includes a dedicated CLI test tool enabling testing on **active live streams, recorded trading videos, or simulated mock streams**.
+
+### Command Syntax
+```bash
+pnpm live-test --url <YOUTUBE_URL> [options]
+```
+
+### Options
+* `--url, -u`: YouTube livestream URL or recorded video watch URL.
+* `--mic`: Capture audio directly from your microphone (live testing).
+* `--file, -f`: Stream from a local audio file (.wav, .mp3, .m4a).
+* `--mode, -m`: Inference mode: `live` (Option C, default) or `chunk` (Option A).
+* `--model`: Override the default Gemini model name.
+* `--pushover, -p`: Send instant push alerts to phone/watch via Pushover (`PUSHOVER_USER_KEY` & `PUSHOVER_APP_TOKEN`).
+* `--telegram, -t`: Dispatch alerts to Telegram in addition to terminal output.
+* `--verbose, -v`: Print verbose ffmpeg and streaming buffer metrics.
+* `--duration, -d`: Maximum test run duration in seconds.
+* `--mock`: Run an immediate simulated trade detection sequence to verify formatting and state deduplication without YouTube.
+
+### Example Runs
+```bash
+# Test simulated alert sequence
+pnpm live-test --mock
+
+# Test with your microphone and send alerts to your phone via Pushover
+pnpm live-test --mic --pushover
+
+# Test with Gemini Multimodal Live API on YouTube stream
+pnpm live-test --url "https://www.youtube.com/watch?v=EXAMPLE_ID" --pushover
+```
+
+---
+
+## 5. Database Schema Extensions (`public.alerts`)
 
 ```sql
--- Migration: YYYYMMDDHHMMSS_create_realtime_alerts_table.sql
+-- Migration: 20261007160000_create_realtime_alerts_table.sql
 
 CREATE TABLE IF NOT EXISTS public.alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     stream_id UUID REFERENCES public.streams(id) ON DELETE CASCADE,
     channel_id UUID NOT NULL REFERENCES public.channels(id) ON DELETE CASCADE,
     symbol TEXT NOT NULL,
-    side TEXT NOT NULL CHECK (side IN ('LONG', 'SHORT')),
+    side TEXT CHECK (side IN ('LONG', 'SHORT')),
     entry_price TEXT,
     stop_loss TEXT,
     take_profit TEXT,
-    trade_type TEXT NOT NULL DEFAULT 'NEW_ENTRY',
-    confidence TEXT NOT NULL DEFAULT 'HIGH',
+    trade_type TEXT NOT NULL DEFAULT 'NEW_ENTRY' CHECK (trade_type IN ('NEW_ENTRY', 'PENDING_ORDER', 'SL_TP_UPDATE', 'EXIT', 'NONE')),
+    confidence TEXT NOT NULL DEFAULT 'HIGH' CHECK (confidence IN ('HIGH', 'MEDIUM', 'LOW')),
     rationale TEXT,
+    verbatim_quote TEXT,
+    stream_timestamp TEXT,
     notification_sent BOOLEAN NOT NULL DEFAULT false,
     notification_channel TEXT NOT NULL DEFAULT 'telegram',
+    idempotency_key TEXT UNIQUE,
     raw_payload JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow authenticated read alerts"
+    ON public.alerts FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Allow service role manage alerts"
+    ON public.alerts FOR ALL USING (auth.role() = 'service_role');
 
 CREATE INDEX IF NOT EXISTS idx_alerts_stream_id ON public.alerts(stream_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_channel_id ON public.alerts(channel_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON public.alerts(created_at DESC);
 ```
-
----
-
-## 5. Phased Implementation Roadmap
-
-### Phase 1: Notification Channel & Dispatcher
-* **Files**: `src/services/notifications/telegram.ts`, `src/types/alert.ts`
-* **Deliverables**:
-  * Create Telegram bot and establish chat binding via `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`).
-  * Implement formatted alert messenger with test harness (`pnpm test-alert`).
-
-### Phase 2: Live Stream Detection Service
-* **Files**: `src/services/live/stream-detector.ts`
-* **Deliverables**:
-  * Poll tracked channels in Supabase for `live` status.
-  * Update `streams` table row status to `stream_status = 'live'` upon discovery.
-  * Emit start/stop stream events.
-
-### Phase 3: Live Audio Tap & Rolling Chunker
-* **Files**: `src/services/live/audio-tap.ts`
-* **Deliverables**:
-  * Integrate `yt-dlp` executable wrapper to obtain the live HLS `.m3u8` playlist.
-  * Implement 60-second rolling audio chunk generator using `ffmpeg` stdout streaming into memory buffer.
-
-### Phase 4: Gemini Flash Audio Analysis Engine
-* **Files**: `src/services/analyzer/live-audio-analyzer.ts`
-* **Deliverables**:
-  * Direct `@google/genai` Gemini Flash integration with audio buffer payload.
-  * Structured schema enforcement and validation.
-  * Confidence scoring and noise rejection.
-
-### Phase 5: State Tracking, Deduplication & Orchestration
-* **Files**: `src/services/live/state-manager.ts`, `src/live-monitor.ts`
-* **Deliverables**:
-  * In-memory session state machine for active trades.
-  * Tie detector, audio tap, analyzer, state manager, and Telegram dispatcher together into a single daemon command (`pnpm live-monitor`).
-  * Write recorded alerts directly into Supabase `alerts` and `trades` tables.
-
----
-
-## 6. Resource Requirements & Operational Cost
-
-| Item | Requirement / Metric | Cost |
-| :--- | :--- | :--- |
-| **Compute** | 1 CPU core, 512 MB – 1 GB RAM (Local or VPS) | Free locally, or ~$4–$5/mo VPS |
-| **YouTube Ingestion** | `yt-dlp` + `ffmpeg` (audio-only stream, ~64kbps) | Negligible bandwidth (~28 MB/hour) |
-| **AI Inference** | Gemini 2.0 Flash Audio (~60 calls/hr @ ~$0.0007/call) | **~$0.04 to $0.05 per hour** |
-| **Push Notifications** | Telegram Bot API | **100% Free** |
-| **Monthly Estimate** | 4 streamers × 2 hours/day × 20 days/month | **~$6.50 – $8.00 / month total** |
-
----
-
-## 7. Failure Modes & Edge Case Handling
-
-1. **Stream Buffer Disconnect / Reconnection**:
-   * If `yt-dlp` loses connection during a stream hiccup, automatically retry with exponential backoff (up to 3 retries over 30s) before terminating the worker.
-2. **Trader Speaks in Mixed Languages (Hindi / Urdu / English)**:
-   * Channels like Booming Bulls and Trade Like Malika frequently use code-switching (*"Ye level break hua to sell karenge, stop loss candle high pe"*).
-   * Gemini 2.0/1.5 Flash natively understands multilingual Hindi, Urdu, and English financial slang (`stop loss`, `target`, `entry`, `break-even`, `point`, `pips`).
-3. **Hypothetical Scenarios vs Real Trades**:
-   * Explicit prompt constraint: The trader must be committing to an active entry, setting an active limit/stop order, or giving a clear signal to viewers.
-   * If the trader says *"Agar ye upar gaya to kal dekhenge"* (If it goes up we'll see tomorrow), classify as `has_trade_action = false`.

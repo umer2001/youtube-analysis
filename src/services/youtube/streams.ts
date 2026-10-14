@@ -312,10 +312,37 @@ async function fetchWatchPageDetails(videoId: string): Promise<Partial<LiveSessi
 
     if (!res.ok) return null;
     const html = await res.text();
-    const match = html.match(/var ytInitialPlayerResponse = ({.*?});<\/script>/s);
-    if (!match) return null;
-
-    const data = JSON.parse(match[1]);
+    let data: any = null;
+    const match = html.match(/var ytInitialPlayerResponse = ({.*?});(?:var |<\/[a-z])/s) || html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/s);
+    if (match) {
+      try { data = JSON.parse(match[1]); } catch {}
+    }
+    if (!data) {
+      const marker = "ytInitialPlayerResponse =";
+      const idx = html.indexOf(marker);
+      if (idx !== -1) {
+        const slice = html.slice(idx + marker.length);
+        const start = slice.indexOf("{");
+        if (start !== -1) {
+          let depth = 0;
+          let end = -1;
+          for (let i = start; i < slice.length; i++) {
+            if (slice[i] === "{") depth++;
+            else if (slice[i] === "}") {
+              depth--;
+              if (depth === 0) {
+                end = i + 1;
+                break;
+              }
+            }
+          }
+          if (end !== -1) {
+            try { data = JSON.parse(slice.slice(start, end)); } catch {}
+          }
+        }
+      }
+    }
+    if (!data) return null;
     const vd = data.videoDetails;
     const mf = data.microformat?.playerMicroformatRenderer;
     const liveDetails = mf?.liveBroadcastDetails;

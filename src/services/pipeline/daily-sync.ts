@@ -99,7 +99,7 @@ export async function syncTrackedChannelsStreams(options: {
           video_id: s.videoId,
           title: s.title,
           description: s.description || null,
-          published_at: s.scheduledStartTime || null,
+          published_at: s.publishedAt || s.actualStartTime || s.scheduledStartTime || null,
           stream_url: s.url,
           stream_status: "completed",
           processing_status: "unprocessed",

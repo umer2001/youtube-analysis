@@ -120,13 +120,98 @@ export async function scrapeChannelStreams(
         });
 
         if (streams.length >= maxResults) {
-          return streams;
+          break;
         }
       }
+      if (streams.length >= maxResults) {
+        break;
+      }
+    }
+    if (streams.length >= maxResults) {
+      break;
     }
   }
 
-  return streams;
+  // Concurrently enrich streams with publishedAt and description from watch page
+  const enriched = await Promise.all(
+    streams.slice(0, maxResults).map(async (st) => {
+      const details = await fetchWatchPageDetails(st.videoId);
+      return {
+        ...st,
+        publishedAt: details.publishedAt,
+        description: details.description || st.description,
+      };
+    })
+  );
+
+  return enriched;
+}
+
+async function fetchWatchPageDetails(
+  videoId: string
+): Promise<{ publishedAt?: string; description?: string }> {
+  try {
+    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cookie": "PREF=hl=en&gl=US",
+      },
+    });
+
+    if (!res.ok) return {};
+    const html = await res.text();
+    const marker = "ytInitialPlayerResponse =";
+    const idx = html.indexOf(marker);
+    if (idx === -1) return {};
+
+    const slice = html.slice(idx + marker.length);
+    const start = slice.indexOf("{");
+    if (start === -1) return {};
+
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < slice.length; i++) {
+      if (slice[i] === "{") depth++;
+      else if (slice[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
+    }
+
+    if (end === -1) return {};
+    const data = JSON.parse(slice.slice(start, end));
+    const mf = data.microformat?.playerMicroformatRenderer;
+    const liveDetails = mf?.liveBroadcastDetails;
+    const rawPub =
+      mf?.publishDate ||
+      mf?.uploadDate ||
+      liveDetails?.startTimestamp ||
+      liveDetails?.scheduledStartTime;
+    const desc =
+      data.videoDetails?.shortDescription ||
+      mf?.description?.simpleText ||
+      undefined;
+
+    let publishedAt: string | undefined = undefined;
+    if (rawPub) {
+      const d = new Date(rawPub);
+      if (!isNaN(d.getTime())) {
+        publishedAt = d.toISOString();
+      }
+    }
+
+    return {
+      publishedAt,
+      description: desc,
+    };
+  } catch {
+    return {};
+  }
 }
 
 /**

@@ -157,9 +157,23 @@ export const StreamList = () => {
                   Failed
                 </Badge>
               );
+            case "transcript_pending":
+              return (
+                <Badge
+                  className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 border-amber-500/20 gap-1 text-xs"
+                  title={row.original.error_message || "Transcript pending, retrying during 7-day grace period"}
+                >
+                  <Clock className="h-3 w-3" />
+                  Pending Retry
+                </Badge>
+              );
             case "no_transcript":
               return (
-                <Badge className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 border-amber-500/20 gap-1 text-xs">
+                <Badge
+                  variant="outline"
+                  className="text-muted-foreground border-dashed gap-1 text-xs"
+                  title={row.original.error_message || "No transcript available after 7-day grace window. Abandoned."}
+                >
                   <FileQuestion className="h-3 w-3" />
                   No Transcript
                 </Badge>

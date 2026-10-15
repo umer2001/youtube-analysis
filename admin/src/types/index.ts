@@ -14,6 +14,7 @@ export interface Channel {
 export type StreamStatus = "completed" | "live" | "upcoming";
 export type ProcessingStatus =
   | "unprocessed"
+  | "transcript_pending"
   | "batch_submitted"
   | "completed"
   | "failed"

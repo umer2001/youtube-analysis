@@ -3,6 +3,7 @@ import { TradeItem } from "./trade.js";
 export type StreamStatus = "completed" | "live" | "upcoming";
 export type StreamProcessingStatus =
   | "unprocessed"
+  | "transcript_pending"
   | "batch_submitted"
   | "completed"
   | "failed"

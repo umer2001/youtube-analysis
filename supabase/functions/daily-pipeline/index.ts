@@ -302,25 +302,47 @@ Deno.serve(async (req: Request) => {
     }
 
     // =========================================================================
-    // STEP 2: SUBMIT BATCH (Package unprocessed streams)
+    // STEP 2: SUBMIT BATCH (Package unprocessed & transcript_pending streams)
     // =========================================================================
     if (action === "all" || action === "submit") {
+      // 1. Fetch fresh unprocessed completed streams first
       const { data: unprocessed, error: unprocErr } = await supabase
         .from("streams")
         .select("*")
         .eq("stream_status", "completed")
         .eq("processing_status", "unprocessed")
+        .order("published_at", { ascending: false, nullsFirst: false })
         .limit(limit);
 
       if (unprocErr) throw unprocErr;
 
-      if (!unprocessed || unprocessed.length === 0) {
+      let candidateStreams = unprocessed || [];
+
+      // 2. If slots remain, fill with transcript_pending streams needing retry (oldest attempts first)
+      if (candidateStreams.length < limit) {
+        const remainingLimit = limit - candidateStreams.length;
+        const { data: pending, error: pendErr } = await supabase
+          .from("streams")
+          .select("*")
+          .eq("stream_status", "completed")
+          .eq("processing_status", "transcript_pending")
+          .order("updated_at", { ascending: true })
+          .limit(remainingLimit);
+
+        if (pendErr) throw pendErr;
+        if (pending && pending.length > 0) {
+          candidateStreams = [...candidateStreams, ...pending];
+        }
+      }
+
+      if (candidateStreams.length === 0) {
         report.submit = { status: "no_streams", submittedCount: 0, batchSizeLimit: limit };
       } else {
         const requests: BatchRequestItem[] = [];
         const validVideoIds: string[] = [];
+        const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-        for (const stream of unprocessed) {
+        for (const stream of candidateStreams) {
           try {
             const { formattedText } = await getFormattedTranscript(stream.video_id);
             const { systemPrompt, userPrompt } = buildTradeExtractionPrompt(formattedText);
@@ -338,11 +360,21 @@ Deno.serve(async (req: Request) => {
 
             validVideoIds.push(stream.video_id);
           } catch (tErr: any) {
+            const streamDate = stream.published_at || stream.created_at;
+            const streamAgeMs = streamDate ? Date.now() - new Date(streamDate).getTime() : 0;
+            const isAbandoned = streamAgeMs >= ONE_WEEK_MS;
+
+            const newStatus = isAbandoned ? "no_transcript" : "transcript_pending";
+            const reason = tErr.message || "Failed to load transcript";
+            const errorMessage = isAbandoned
+              ? `Transcript unavailable after 7-day grace window. Abandoned. (${reason})`
+              : `Transcript not yet available. Retrying during 7-day grace window. (${reason})`;
+
             await supabase
               .from("streams")
               .update({
-                processing_status: "no_transcript",
-                error_message: tErr.message || "Failed to load transcript",
+                processing_status: newStatus,
+                error_message: errorMessage,
               })
               .eq("video_id", stream.video_id);
           }

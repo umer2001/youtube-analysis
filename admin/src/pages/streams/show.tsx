@@ -312,10 +312,16 @@ export const StreamShow = () => {
                 Failed
               </Badge>
             )}
+            {stream.processing_status === "transcript_pending" && (
+              <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/20 gap-1 animate-pulse" title={stream.error_message || undefined}>
+                <Clock className="h-3.5 w-3.5" />
+                Transcript Pending (Retrying)
+              </Badge>
+            )}
             {stream.processing_status === "no_transcript" && (
-              <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/20 gap-1">
+              <Badge variant="outline" className="text-muted-foreground border-dashed gap-1" title={stream.error_message || undefined}>
                 <FileQuestion className="h-3.5 w-3.5" />
-                No Transcript
+                No Transcript (Abandoned &gt;1w)
               </Badge>
             )}
             {stream.processing_status === "unprocessed" && (

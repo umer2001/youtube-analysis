@@ -26,7 +26,7 @@ import {
   parseBatchResults,
   prepareTranscriptBatchRequests,
 } from "../analyzer/batch.js";
-import { StreamInsert } from "../../types/database.js";
+import { StreamInsert, StreamProcessingStatus } from "../../types/database.js";
 import { LiveSession } from "../../types/stream.js";
 
 export interface SyncChannelsResult {
@@ -159,11 +159,28 @@ export async function submitUnprocessedStreamsBatch(options: {
   const { requests, validStreams, skippedStreams } =
     await prepareTranscriptBatchRequests(candidateSessions);
 
-  // Mark skipped streams as no_transcript
+  // Mark skipped streams: retry if < 7 days old, abandon if >= 7 days old
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const rowMap = new Map(unprocessedRows.map((r) => [r.video_id, r]));
+
   for (const skipped of skippedStreams) {
+    const row = rowMap.get(skipped.stream.videoId);
+    const streamDate = row?.published_at || row?.created_at;
+    const streamAgeMs = streamDate ? Date.now() - new Date(streamDate).getTime() : 0;
+    const isAbandoned = streamAgeMs >= ONE_WEEK_MS;
+
+    const newStatus: StreamProcessingStatus = isAbandoned
+      ? "no_transcript"
+      : "transcript_pending";
+
+    const reason = skipped.reason || "Transcript unavailable";
+    const errorMessage = isAbandoned
+      ? `Transcript unavailable after 7-day grace window. Abandoned. (${reason})`
+      : `Transcript not yet available. Retrying during 7-day grace window. (${reason})`;
+
     await updateStreamByVideoId(skipped.stream.videoId, {
-      processing_status: "no_transcript",
-      error_message: skipped.reason,
+      processing_status: newStatus,
+      error_message: errorMessage,
     });
   }
 

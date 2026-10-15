@@ -17,12 +17,13 @@ export async function upsertStreams(streams: StreamInsert[]): Promise<StreamRow[
   return data || [];
 }
 
-export async function getUnprocessedCompletedStreams(
-  limit = 50
+export async function getStreamsForBatchSubmission(
+  limit = 15
 ): Promise<StreamRow[]> {
   const supabase = getSupabaseClient();
 
-  const { data, error } = await supabase
+  // 1. Prioritize fresh 'unprocessed' completed streams first
+  const { data: unprocessed, error: unprocErr } = await supabase
     .from("streams")
     .select("*")
     .eq("stream_status", "completed")
@@ -30,11 +31,39 @@ export async function getUnprocessedCompletedStreams(
     .order("published_at", { ascending: false, nullsFirst: false })
     .limit(limit);
 
-  if (error) {
-    throw new Error(`Failed to query unprocessed streams: ${error.message}`);
+  if (unprocErr) {
+    throw new Error(`Failed to query unprocessed streams: ${unprocErr.message}`);
   }
 
-  return data || [];
+  let candidates: StreamRow[] = unprocessed || [];
+
+  // 2. If slots remain, fill with 'transcript_pending' streams (least recently checked first)
+  if (candidates.length < limit) {
+    const remainingLimit = limit - candidates.length;
+    const { data: pending, error: pendErr } = await supabase
+      .from("streams")
+      .select("*")
+      .eq("stream_status", "completed")
+      .eq("processing_status", "transcript_pending")
+      .order("updated_at", { ascending: true })
+      .limit(remainingLimit);
+
+    if (pendErr) {
+      throw new Error(`Failed to query pending transcript streams: ${pendErr.message}`);
+    }
+
+    if (pending && pending.length > 0) {
+      candidates = [...candidates, ...pending];
+    }
+  }
+
+  return candidates;
+}
+
+export async function getUnprocessedCompletedStreams(
+  limit = 50
+): Promise<StreamRow[]> {
+  return getStreamsForBatchSubmission(limit);
 }
 
 export async function getStreamsByBatchId(batchId: string): Promise<StreamRow[]> {

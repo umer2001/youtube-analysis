@@ -26,8 +26,8 @@ Deno.serve(async (req: Request) => {
 
     let action = url.searchParams.get("action") || "all";
     let modelOverride = url.searchParams.get("model") || undefined;
-    let limit = parseInt(url.searchParams.get("limit") || url.searchParams.get("maxBatchSize") || "2", 10);
-    if (isNaN(limit) || limit <= 0) limit = 2;
+    let limit = parseInt(url.searchParams.get("limit") || url.searchParams.get("maxBatchSize") || "4", 10);
+    if (isNaN(limit) || limit <= 0) limit = 4;
 
     if (req.method === "POST") {
       try {
@@ -79,7 +79,7 @@ Deno.serve(async (req: Request) => {
         const status = resp.status;
         const text = await resp.text();
         let data: any = null;
-        try { data = JSON.parse(text); } catch {}
+        try { data = JSON.parse(text); } catch { }
         const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
         results.direct_innertube = {
           status,
@@ -133,7 +133,7 @@ Deno.serve(async (req: Request) => {
           const pStatus = pResp.status;
           const pText = await pResp.text();
           let pData: any = null;
-          try { pData = JSON.parse(pText); } catch {}
+          try { pData = JSON.parse(pText); } catch { }
           const pTracks = pData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
           let timedTextProxyResult: any = null;

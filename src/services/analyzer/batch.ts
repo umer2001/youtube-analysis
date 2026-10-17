@@ -78,6 +78,42 @@ ${formattedTranscript}`;
 }
 
 /**
+ * Encodes an identifier (e.g. YouTube videoId) into a safe string matching [a-z0-9_-].
+ * OpenRouter batch providers (e.g. Anthropic, Mistral, OpenAI) strictly enforce:
+ * custom_id may only contain characters in [a-z0-9_-] with length <= 64 chars.
+ * YouTube video IDs contain uppercase letters (e.g. 'rFXiMXRhGSU'), which violate this constraint.
+ */
+export function encodeCustomId(id: string): string {
+  if (!id) return "";
+  let hex = "";
+  for (let i = 0; i < id.length; i++) {
+    hex += id.charCodeAt(i).toString(16).padStart(2, "0");
+  }
+  return `yt_${hex}`;
+}
+
+/**
+ * Decodes an encoded custom_id back to its original identifier.
+ * If the string starts with 'yt_', it decodes the hex back to ASCII.
+ * Otherwise, it returns the customId as-is for backwards compatibility.
+ */
+export function decodeCustomId(customId: string): string {
+  if (!customId) return "";
+  if (customId.startsWith("yt_")) {
+    const hex = customId.slice(3);
+    let str = "";
+    for (let i = 0; i < hex.length; i += 2) {
+      const code = parseInt(hex.slice(i, i + 2), 16);
+      if (!isNaN(code)) {
+        str += String.fromCharCode(code);
+      }
+    }
+    return str;
+  }
+  return customId;
+}
+
+/**
  * Fetches transcripts for a list of livestream sessions and prepares batch request items.
  */
 export async function prepareTranscriptBatchRequests(
@@ -99,7 +135,7 @@ export async function prepareTranscriptBatchRequests(
       const { systemPrompt, userPrompt } = buildTradeExtractionPrompt(formattedText);
 
       requests.push({
-        customId: stream.videoId,
+        customId: encodeCustomId(stream.videoId),
         body: {
           messages: [
             { role: "system", content: systemPrompt },
@@ -145,11 +181,19 @@ export async function createOpenRouterBatch(
     process.env.OPENROUTER_BATCH_MODEL ||
     "google/gemini-2.5-flash";
 
+  // Ensure all customId values strictly satisfy [a-z0-9_-]
+  const sanitizedRequests = requests.map((req) => ({
+    ...req,
+    customId: /^[a-z0-9_-]+$/.test(req.customId)
+      ? req.customId
+      : encodeCustomId(req.customId),
+  }));
+
   const batchSubmitBody: BatchSubmitBody = {
     endpoint: "/v1/chat/completions",
     model,
     completionWindow: "24h",
-    requests: requests as any,
+    requests: sanitizedRequests as any,
   };
 
   if (options.providerOnly && options.providerOnly.length > 0) {
@@ -214,8 +258,9 @@ export function parseBatchResults(
   }
 
   return batch.results.map((item) => {
-    const videoId = item.customId;
-    const session = streamsMap.get(videoId);
+    const rawId = item.customId || (item as any).custom_id || "";
+    const videoId = decodeCustomId(rawId);
+    const session = streamsMap.get(videoId) || streamsMap.get(rawId);
     const title = session?.title || `Stream ${videoId}`;
     const url = session?.url || `https://www.youtube.com/watch?v=${videoId}`;
     const channelTitle = session?.channelTitle || "Unknown Channel";

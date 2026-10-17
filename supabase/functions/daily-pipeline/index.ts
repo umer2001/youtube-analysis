@@ -12,6 +12,7 @@ import {
   getBatch,
   parseBatchTradeResults,
   BatchRequestItem,
+  encodeCustomId,
 } from "./_shared/openrouter.ts";
 
 Deno.serve(async (req: Request) => {
@@ -348,7 +349,7 @@ Deno.serve(async (req: Request) => {
             const { systemPrompt, userPrompt } = buildTradeExtractionPrompt(formattedText);
 
             requests.push({
-              custom_id: stream.video_id,
+              custom_id: encodeCustomId(stream.video_id),
               body: {
                 messages: [
                   { role: "system", content: systemPrompt },
@@ -457,7 +458,12 @@ Deno.serve(async (req: Request) => {
               .select("*")
               .eq("batch_id", b.id);
 
-            const streamMap = new Map((streams || []).map((s) => [s.video_id, s]));
+            const streamMap = new Map<string, any>();
+            for (const s of streams || []) {
+              streamMap.set(s.video_id, s);
+              streamMap.set(s.id, s);
+              streamMap.set(encodeCustomId(s.video_id), s);
+            }
             const parsedResults = parseBatchTradeResults(remoteBatch);
 
             for (const item of parsedResults) {

@@ -1,12 +1,48 @@
 const OPENROUTER_BATCH_URL = "https://openrouter.ai/api/v1/batches";
 
 export interface BatchRequestItem {
-  custom_id: string; // YouTube videoId
+  custom_id: string; // Sanitized identifier matching [a-z0-9_-]
   body: {
     messages: Array<{ role: string; content: string }>;
     response_format?: { type: "json_object" };
     [key: string]: any;
   };
+}
+
+/**
+ * Encodes an identifier (e.g. YouTube videoId) into a safe string matching [a-z0-9_-].
+ * OpenRouter batch providers (e.g. Anthropic, Mistral, OpenAI) strictly enforce:
+ * custom_id may only contain characters in [a-z0-9_-] with length <= 64 chars.
+ * YouTube video IDs contain uppercase letters (e.g. 'rFXiMXRhGSU'), which violate this constraint.
+ */
+export function encodeCustomId(id: string): string {
+  if (!id) return "";
+  let hex = "";
+  for (let i = 0; i < id.length; i++) {
+    hex += id.charCodeAt(i).toString(16).padStart(2, "0");
+  }
+  return `yt_${hex}`;
+}
+
+/**
+ * Decodes an encoded custom_id back to its original identifier.
+ * If the string starts with 'yt_', it decodes the hex back to ASCII.
+ * Otherwise, it returns the customId as-is for backwards compatibility.
+ */
+export function decodeCustomId(customId: string): string {
+  if (!customId) return "";
+  if (customId.startsWith("yt_")) {
+    const hex = customId.slice(3);
+    let str = "";
+    for (let i = 0; i < hex.length; i += 2) {
+      const code = parseInt(hex.slice(i, i + 2), 16);
+      if (!isNaN(code)) {
+        str += String.fromCharCode(code);
+      }
+    }
+    return str;
+  }
+  return customId;
 }
 
 export function buildTradeExtractionPrompt(formattedTranscript: string): {
@@ -57,11 +93,19 @@ export async function createBatch(
     Deno.env.get("OPENROUTER_BATCH_MODEL") ||
     "xiaomi/mimo-v2.6-pro";
 
+  // Ensure all custom_id values strictly satisfy [a-z0-9_-]
+  const sanitizedRequests = requests.map((req) => ({
+    ...req,
+    custom_id: /^[a-z0-9_-]+$/.test(req.custom_id)
+      ? req.custom_id
+      : encodeCustomId(req.custom_id),
+  }));
+
   const payload = {
     endpoint: "/v1/chat/completions",
     model,
     completion_window: "24h",
-    requests,
+    requests: sanitizedRequests,
   };
 
   const res = await fetch(OPENROUTER_BATCH_URL, {
@@ -114,7 +158,8 @@ export function parseBatchTradeResults(batch: any): Array<{
   const results = batch.results || [];
 
   return results.map((item: any) => {
-    const videoId = item.custom_id || item.customId;
+    const rawId = item.custom_id || item.customId || "";
+    const videoId = decodeCustomId(rawId);
 
     if (item.error) {
       return {

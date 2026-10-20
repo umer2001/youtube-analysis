@@ -71,6 +71,7 @@ function App() {
                   list: "/streams",
                   show: "/streams/show/:id",
                   meta: {
+                    canDelete: true,
                     label: "Livestreams",
                     icon: <Radio className="w-4 h-4" />,
                   },
@@ -79,6 +80,7 @@ function App() {
                   name: "trades",
                   list: "/trades",
                   meta: {
+                    canDelete: true,
                     label: "Extracted Trades",
                     icon: <TrendingUp className="w-4 h-4" />,
                   },

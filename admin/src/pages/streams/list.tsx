@@ -1,40 +1,56 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useTable } from "@refinedev/react-table";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useMany, useSelect } from "@refinedev/core";
 import { useSearchParams, useNavigate } from "react-router";
+import { toast } from "sonner";
 import {
   ExternalLink,
   Play,
-  Filter,
   CheckCircle2,
   Clock,
   AlertCircle,
   HelpCircle,
   FileQuestion,
-  X,
   TrendingUp,
+  Trash2,
+  Loader2,
+  Layers,
 } from "lucide-react";
 
 import { DataTable } from "@/components/refine-ui/data-table/data-table";
 import { ListView } from "@/components/refine-ui/views/list-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Breadcrumb } from "@/components/refine-ui/layout/breadcrumb";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ComplexFilterBar, type FilterFieldConfig } from "@/components/complex-filter";
+import { supabaseClient } from "@/providers/supabase-client";
 import type { Stream, Channel } from "@/types";
 
 export const StreamList = () => {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const channelFilterParam = searchParams.get("channel_id") || "all";
+
+  // Row selection state for bulk operations
+  const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
+
+  // Deletion dialog states
+  const [streamToDelete, setStreamToDelete] = useState<Stream | null>(null);
+  const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Channel dropdown options
   const { options: channelOptions } = useSelect<Channel>({
@@ -47,6 +63,36 @@ export const StreamList = () => {
     const columnHelper = createColumnHelper<Stream>();
 
     return [
+      // Checkbox selection column
+      columnHelper.display({
+        id: "select",
+        header: ({ table }) => (
+          <div className="flex items-center justify-center pl-2">
+            <Checkbox
+              checked={
+                table.getIsAllPageRowsSelected() ||
+                (table.getIsSomePageRowsSelected() && "indeterminate")
+              }
+              onCheckedChange={(val) => table.toggleAllPageRowsSelected(!!val)}
+              aria-label="Select all streams on page"
+              className="translate-y-[1px]"
+            />
+          </div>
+        ),
+        cell: ({ row }) => (
+          <div className="flex items-center justify-center pl-2">
+            <Checkbox
+              checked={row.getIsSelected()}
+              onCheckedChange={(val) => row.toggleSelected(!!val)}
+              aria-label="Select stream row"
+              className="translate-y-[1px]"
+            />
+          </div>
+        ),
+        enableSorting: false,
+        size: 40,
+      }),
+
       columnHelper.display({
         id: "stream",
         header: "Stream / Video",
@@ -97,7 +143,7 @@ export const StreamList = () => {
             </div>
           );
         },
-        size: 380,
+        size: 360,
       }),
       columnHelper.accessor("channel_id", {
         id: "channel_id",
@@ -237,20 +283,32 @@ export const StreamList = () => {
       }),
       columnHelper.display({
         id: "actions",
-        header: "Analysis",
+        header: "Actions",
         cell: ({ row }) => (
-          <Button
-            size="sm"
-            variant="default"
-            className="h-8 gap-1.5 text-xs font-medium"
-            onClick={() => navigate(`/streams/show/${row.original.id}`)}
-          >
-            <Play className="h-3.5 w-3.5 fill-current" />
-            <span>View & Analyze</span>
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="default"
+              className="h-8 gap-1.5 text-xs font-medium"
+              onClick={() => navigate(`/streams/show/${row.original.id}`)}
+            >
+              <Play className="h-3.5 w-3.5 fill-current" />
+              <span>View & Analyze</span>
+            </Button>
+
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              onClick={() => setStreamToDelete(row.original)}
+              title="Delete stream and associated trades"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         ),
         enableSorting: false,
-        size: 140,
+        size: 170,
       }),
     ];
   }, [navigate]);
@@ -292,6 +350,12 @@ export const StreamList = () => {
         pageSize: 15,
       },
     },
+    enableRowSelection: true,
+    getRowId: (row) => row.id,
+    state: {
+      rowSelection,
+    },
+    onRowSelectionChange: setRowSelection,
   });
 
   // Extract channel IDs from rows to fetch channel names in batch
@@ -326,28 +390,129 @@ export const StreamList = () => {
     channelMap,
   };
 
-  const handleChannelFilterChange = (val: string) => {
-    if (val === "all") {
-      table.refineCore.setFilters([], "replace");
-      setSearchParams({});
-    } else {
-      table.refineCore.setFilters(
-        [
-          {
-            field: "channel_id",
-            operator: "eq",
-            value: val,
-          },
+  // Complex filter configurations for Livestreams
+  const filterFields: FilterFieldConfig[] = useMemo(() => {
+    return [
+      {
+        id: "channel_id",
+        label: "Channel",
+        type: "select",
+        options: channelOptions.map((opt) => ({
+          label: String(opt.label),
+          value: String(opt.value),
+        })),
+        quickFilter: true,
+      },
+      {
+        id: "processing_status",
+        label: "Pipeline Status",
+        type: "select",
+        options: [
+          { label: "Completed", value: "completed" },
+          { label: "Analyzing", value: "batch_submitted" },
+          { label: "Failed", value: "failed" },
+          { label: "Pending Retry", value: "transcript_pending" },
+          { label: "No Transcript", value: "no_transcript" },
+          { label: "Unprocessed", value: "unprocessed" },
         ],
-        "replace"
-      );
-      setSearchParams({ channel_id: val });
+        quickFilter: true,
+      },
+      {
+        id: "stream_status",
+        label: "Stream Status",
+        type: "select",
+        options: [
+          { label: "Completed", value: "completed" },
+          { label: "Live", value: "live" },
+          { label: "Upcoming", value: "upcoming" },
+        ],
+        quickFilter: true,
+      },
+      {
+        id: "title",
+        label: "Stream Title",
+        type: "text",
+        placeholder: "Search by title...",
+        quickFilter: true,
+      },
+      {
+        id: "video_id",
+        label: "YouTube Video ID",
+        type: "text",
+        placeholder: "e.g. dQw4w9WgXcQ",
+      },
+      {
+        id: "published_at",
+        label: "Stream Date",
+        type: "date",
+      },
+    ];
+  }, [channelOptions]);
+
+  // Selected streams count
+  const selectedStreamIds = useMemo(() => {
+    return Object.keys(rowSelection).filter((k) => rowSelection[k]);
+  }, [rowSelection]);
+
+  // Single stream deletion handler
+  const handleDeleteStream = async () => {
+    if (!streamToDelete) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabaseClient
+        .from("streams")
+        .delete()
+        .eq("id", streamToDelete.id);
+
+      if (error) throw error;
+
+      toast.success("Livestream and its associated trades deleted successfully");
+      setStreamToDelete(null);
+      // Remove from selection if it was selected
+      setRowSelection((prev) => {
+        const next = { ...prev };
+        delete next[streamToDelete.id];
+        return next;
+      });
+      table.refineCore.tableQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete livestream");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  const clearChannelFilter = () => {
-    handleChannelFilterChange("all");
+  // Bulk stream deletion handler
+  const handleBulkDeleteStreams = async () => {
+    if (selectedStreamIds.length === 0) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabaseClient
+        .from("streams")
+        .delete()
+        .in("id", selectedStreamIds);
+
+      if (error) throw error;
+
+      toast.success(
+        `Successfully deleted ${selectedStreamIds.length} streams and their associated trades`
+      );
+      setRowSelection({});
+      setIsBulkDialogOpen(false);
+      table.refineCore.tableQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete selected livestreams");
+    } finally {
+      setIsDeleting(false);
+    }
   };
+
+  const tradeCountForStreamToDelete = useMemo(() => {
+    if (!streamToDelete) return 0;
+    return Array.isArray(streamToDelete.trades) && streamToDelete.trades[0]
+      ? streamToDelete.trades[0].count
+      : 0;
+  }, [streamToDelete]);
 
   return (
     <ListView>
@@ -360,50 +525,162 @@ export const StreamList = () => {
           <Separator className="absolute left-0 right-0 z-[1]" />
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Livestreams</h2>
-            <p className="text-sm text-muted-foreground">
-              Monitor detected trading sessions, pipeline statuses, and AI trade extractions.
-            </p>
-          </div>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-2xl font-bold tracking-tight">Livestreams</h2>
+          <p className="text-sm text-muted-foreground">
+            Monitor detected trading sessions, pipeline statuses, and AI trade extractions.
+          </p>
+        </div>
 
-          {/* Channel Filter Dropdown */}
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
-            <Select
-              value={channelFilterParam}
-              onValueChange={handleChannelFilterChange}
-            >
-              <SelectTrigger className="w-[220px] h-9 text-xs">
-                <SelectValue placeholder="Filter by Channel" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Tracked Channels</SelectItem>
-                {channelOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value as string}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        {/* Complex ERPNext/Airtable Style Filter Bar */}
+        <ComplexFilterBar
+          fields={filterFields}
+          filters={table.refineCore.filters}
+          onFiltersChange={(newFilters) => {
+            table.refineCore.setFilters(newFilters, "replace");
+          }}
+        />
 
-            {channelFilterParam !== "all" && (
+        {/* Bulk Action Bar (visible when rows are selected) */}
+        {selectedStreamIds.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-lg text-sm transition-all animate-in fade-in-50">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-primary" />
+              <span className="font-semibold text-foreground">
+                {selectedStreamIds.length}{" "}
+                {selectedStreamIds.length === 1 ? "stream" : "streams"} selected
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-9 px-2 text-xs text-muted-foreground hover:text-foreground"
-                onClick={clearChannelFilter}
-                title="Clear filter"
+                className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setRowSelection({})}
               >
-                <X className="h-4 w-4" />
+                Deselect all
               </Button>
-            )}
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-8 text-xs gap-1.5 font-medium shadow-sm"
+                onClick={() => setIsBulkDialogOpen(true)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete Selected ({selectedStreamIds.length})</span>
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <DataTable table={table} />
+
+      {/* Single Stream Delete Alert Dialog */}
+      <AlertDialog
+        open={!!streamToDelete}
+        onOpenChange={(open) => !open && !isDeleting && setStreamToDelete(null)}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <div className="p-2 w-fit rounded-full bg-destructive/10 text-destructive mb-2">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle className="text-lg">
+              Delete Livestream?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-relaxed space-y-2">
+              <span>
+                Are you sure you want to delete{" "}
+                <strong className="text-foreground">
+                  &ldquo;{streamToDelete?.title}&rdquo;
+                </strong>
+                ?
+              </span>
+              <span className="block text-destructive/90 font-medium">
+                Warning: This will permanently delete this stream session and all{" "}
+                {tradeCountForStreamToDelete > 0
+                  ? `${tradeCountForStreamToDelete} associated extracted trade${
+                      tradeCountForStreamToDelete === 1 ? "" : "s"
+                    }`
+                  : "associated trades"}{" "}
+                from the database.
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                This action cannot be undone.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteStream}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete Stream & Trades"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Stream Delete Alert Dialog */}
+      <AlertDialog
+        open={isBulkDialogOpen}
+        onOpenChange={(open) => !open && !isDeleting && setIsBulkDialogOpen(false)}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <div className="p-2 w-fit rounded-full bg-destructive/10 text-destructive mb-2">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle className="text-lg">
+              Delete {selectedStreamIds.length} Livestreams?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-relaxed space-y-2">
+              <span>
+                Are you sure you want to delete the{" "}
+                <strong className="text-foreground">
+                  {selectedStreamIds.length} selected livestream sessions
+                </strong>
+                ?
+              </span>
+              <span className="block text-destructive/90 font-medium">
+                Warning: This will permanently delete all {selectedStreamIds.length} selected
+                streams along with ALL associated extracted trades across these streams.
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                This action cannot be undone.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleBulkDeleteStreams}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                  Deleting...
+                </>
+              ) : (
+                `Delete ${selectedStreamIds.length} Streams`
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ListView>
   );
 };

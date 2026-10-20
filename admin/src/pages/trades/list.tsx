@@ -8,6 +8,7 @@ import { DataTable } from "@/components/refine-ui/data-table/data-table";
 import { ListView, ListViewHeader } from "@/components/refine-ui/views/list-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ComplexFilterBar, type FilterFieldConfig } from "@/components/complex-filter";
 import type { Trade } from "@/types";
 
 export const TradeList = () => {
@@ -158,6 +159,59 @@ export const TradeList = () => {
     ];
   }, [navigate]);
 
+  const filterFields: FilterFieldConfig[] = useMemo(() => [
+    {
+      id: "symbol",
+      label: "Symbol / Asset",
+      type: "text",
+      placeholder: "e.g. NQ, ES, BTC...",
+      quickFilter: true,
+    },
+    {
+      id: "side",
+      label: "Side",
+      type: "select",
+      options: [
+        { label: "LONG", value: "LONG" },
+        { label: "SHORT", value: "SHORT" },
+      ],
+      quickFilter: true,
+    },
+    {
+      id: "result",
+      label: "Result",
+      type: "select",
+      options: [
+        { label: "TP (Take Profit)", value: "TP" },
+        { label: "SL (Stop Loss)", value: "SL" },
+        { label: "UNKNOWN", value: "UNKNOWN" },
+      ],
+      quickFilter: true,
+    },
+    {
+      id: "notes",
+      label: "Notes / Rationale",
+      type: "text",
+      placeholder: "Search rationale...",
+      quickFilter: true,
+    },
+    {
+      id: "entry_price",
+      label: "Entry Price",
+      type: "text",
+    },
+    {
+      id: "exit_price",
+      label: "Exit Price",
+      type: "text",
+    },
+    {
+      id: "created_at",
+      label: "Extracted Date",
+      type: "date",
+    },
+  ], []);
+
   const table = useTable<Trade>({
     columns,
     refineCoreProps: {
@@ -179,11 +233,22 @@ export const TradeList = () => {
 
   return (
     <ListView>
-      <ListViewHeader
-        resource="trades"
-        title="Extracted Trades"
-        canCreate={false}
-      />
+      <div className="flex flex-col gap-4">
+        <ListViewHeader
+          resource="trades"
+          title="Extracted Trades"
+          canCreate={false}
+        />
+
+        <ComplexFilterBar
+          fields={filterFields}
+          filters={table.refineCore.filters}
+          onFiltersChange={(newFilters) => {
+            table.refineCore.setFilters(newFilters, "replace");
+          }}
+        />
+      </div>
+
       <DataTable table={table} />
     </ListView>
   );

@@ -10,7 +10,7 @@ import { Sidebar } from "./sidebar";
 export function Layout({ children }: PropsWithChildren) {
   return (
     <ThemeProvider>
-      <SidebarProvider>
+      <SidebarProvider defaultOpen={false}>
         <Sidebar />
         <SidebarInset>
           <Header />

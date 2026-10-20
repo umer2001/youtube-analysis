@@ -22,6 +22,8 @@ export const Header = () => {
 };
 
 function DesktopHeader() {
+  const { open } = useSidebar();
+
   return (
     <header
       className={cn(
@@ -35,13 +37,20 @@ function DesktopHeader() {
         "border-b",
         "border-border",
         "bg-sidebar",
-        "pr-3",
-        "justify-end",
+        "px-4",
+        "justify-between",
         "z-40"
       )}
     >
-      <ThemeToggle />
-      <UserDropdown />
+      <div className="flex items-center gap-2">
+        {!open && (
+          <SidebarTrigger className="-ml-1 text-muted-foreground hover:text-foreground" />
+        )}
+      </div>
+      <div className="flex items-center gap-4">
+        <ThemeToggle />
+        <UserDropdown />
+      </div>
     </header>
   );
 }

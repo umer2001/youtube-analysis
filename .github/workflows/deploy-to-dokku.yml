@@ -1,0 +1,322 @@
+name: Deploy Live Monitor to Dokku
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "live-monitor/**"
+      - ".github/workflows/deploy-to-dokku.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: live-monitor-dokku-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build & Deploy to Dokku VM
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: live-monitor
+      DOKKU_HOST: REDACTED_DOKKU_HOST
+      DOKKU_DOMAIN: ${{ vars.DOKKU_LIVE_MONITOR_DOMAIN || 'REDACTED_DOKKU_DOMAIN' }}
+      IMAGE_TAG: live-monitor:${{ github.sha }}
+      DOKKU_SSH_PRIVATE_KEY: ${{ secrets.DOKKU_SSH_PRIVATE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-live' }}
+      SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_ID || 'REDACTED_SUPABASE_PROJECT_ID' }}.supabase.co
+      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+      PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+      PUSHOVER_DEVICE: ${{ vars.PUSHOVER_DEVICE }}
+      PUSHOVER_EMERGENCY: ${{ vars.PUSHOVER_EMERGENCY }}
+      PUSHOVER_PRIORITY: ${{ vars.PUSHOVER_PRIORITY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+      POLL_INTERVAL_SECONDS: ${{ vars.POLL_INTERVAL_SECONDS || '60' }}
+      MAX_CONCURRENT_STREAMS: ${{ vars.MAX_CONCURRENT_STREAMS || '3' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --tag "$IMAGE_TAG" ./live-monitor
+
+      - name: Validate required deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_vars=(
+            DOKKU_SSH_PRIVATE_KEY
+            GEMINI_API_KEY
+            SUPABASE_URL
+            SUPABASE_KEY
+          )
+
+          missing_vars=()
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name:-}" ]; then
+              missing_vars+=("$var_name")
+            fi
+          done
+
+          if [ "${#missing_vars[@]}" -gt 0 ]; then
+            printf 'Missing or empty required secrets/variables: %s\n' "${missing_vars[*]}" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH access
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DOKKU_SSH_PRIVATE_KEY" > ~/.ssh/dokku
+          chmod 600 ~/.ssh/dokku
+          cat <<'EOF' > ~/.ssh/known_hosts
+          |1|g7vVE7ccgOTSkbxr+pNtaFC8hLo=|N+O7wB3IVTv2xHqJ5xN/PL9MtFs= ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCM7GzQJXBplU95/AVaW5j+8+bt8gCrF9OSViU6328C6+d675zP64yxBsGDYxd4mhFyOdgOufKYK5y5JXdMrddu2k0eJuDWBTjfGOTGnjDYngxSn2quS4mK4GNnN6wsNE/vFwkK+wwpl4etZkpvrLYOIiUbKtjSt4NO1h7BBQr6c2GjMnFVHYZmWCxpbr+WNB+3gFW8LnzQ/HuAeHfMofPm2PzosvALFmkwKXMyzahtsBLzVuJ/s2tJLOFUfcvbUkyUQ0f1M7Hyy8A0QM+vlRCr+aseHUIeNaGJr/07R9jK2XWIaNCQP3f6SYVY66wCtBR3H1B2IxTNmUh73QJ1Wnr1ZEUHSrKX+OX2E3YnihDU8x66W9EW7EOhfNbqkNf0Ty9wvshwnXEhG0CiHb9pngzwQzbFEXSRdaW4V7FhS2xI+WSHSRXUmZvK16YHuIv1TXCppysT/tOrwWoLDW97E8WcrEKqRJCDQcb50fD9HR52lHih1BpbIP3pcs9DScP0ors=
+          |1|/n0MtfxSlhiGiL+XmYtOrSkN6fk=|0FI8Resre3bzxV/LYh2oVDdG8vg= ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFhT1DGC3ieG7XEcbN1ZkS16S26q6UQ/wIW6rf0zuYnNtoeUuSL6AT7ya2Fm32xwKoCPlzJq7CypFwJDlrhW9fY=
+          |1|LtsxP/3ILSeZCDIAnsOurnAjRKI=|ESAFdkqAypcd4KDPVYGadMgHHnE= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE/lfe0eeQs714wifYwcLk6uLTt+yEBKSN6zzF1ZBaUH
+          EOF
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Ensure Dokku app and domain exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          # Create app if it does not already exist
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "apps:create $APP_NAME || true"
+
+          # Assign domain if specified
+          if [ -n "$DOKKU_DOMAIN" ]; then
+            timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+              "domains:set $APP_NAME $DOKKU_DOMAIN || true"
+          fi
+
+      - name: Sync Dokku runtime config
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          quote_remote_arg() {
+            printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
+          }
+
+          config_args=(
+            "GEMINI_API_KEY=$(quote_remote_arg "$GEMINI_API_KEY")"
+            "GEMINI_MODEL=$(quote_remote_arg "$GEMINI_MODEL")"
+            "SUPABASE_URL=$(quote_remote_arg "$SUPABASE_URL")"
+            "SUPABASE_KEY=$(quote_remote_arg "$SUPABASE_KEY")"
+            "POLL_INTERVAL_SECONDS=$(quote_remote_arg "$POLL_INTERVAL_SECONDS")"
+            "MAX_CONCURRENT_STREAMS=$(quote_remote_arg "$MAX_CONCURRENT_STREAMS")"
+          )
+
+          if [ -n "${PUSHOVER_USER_KEY:-}" ]; then
+            config_args+=("PUSHOVER_USER_KEY=$(quote_remote_arg "$PUSHOVER_USER_KEY")")
+          fi
+          if [ -n "${PUSHOVER_APP_TOKEN:-}" ]; then
+            config_args+=("PUSHOVER_APP_TOKEN=$(quote_remote_arg "$PUSHOVER_APP_TOKEN")")
+          fi
+          if [ -n "${PUSHOVER_DEVICE:-}" ]; then
+            config_args+=("PUSHOVER_DEVICE=$(quote_remote_arg "$PUSHOVER_DEVICE")")
+          fi
+          if [ -n "${PUSHOVER_EMERGENCY:-}" ]; then
+            config_args+=("PUSHOVER_EMERGENCY=$(quote_remote_arg "$PUSHOVER_EMERGENCY")")
+          fi
+          if [ -n "${PUSHOVER_PRIORITY:-}" ]; then
+            config_args+=("PUSHOVER_PRIORITY=$(quote_remote_arg "$PUSHOVER_PRIORITY")")
+          fi
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            config_args+=("TELEGRAM_BOT_TOKEN=$(quote_remote_arg "$TELEGRAM_BOT_TOKEN")")
+          fi
+          if [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            config_args+=("TELEGRAM_CHAT_ID=$(quote_remote_arg "$TELEGRAM_CHAT_ID")")
+          fi
+          if [ -n "${YOUTUBE_API_KEY:-}" ]; then
+            config_args+=("YOUTUBE_API_KEY=$(quote_remote_arg "$YOUTUBE_API_KEY")")
+          fi
+          if [ -n "${YOUTUBE_COOKIES:-}" ]; then
+            config_args+=("YOUTUBE_COOKIES=$(quote_remote_arg "$YOUTUBE_COOKIES")")
+          fi
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "config:set --no-restart $APP_NAME ${config_args[*]}"
+
+      - name: Clear abandoned Dokku build state
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "builds:cancel $APP_NAME || true"
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "builds:prune $APP_NAME || true"
+
+      - name: Dokku cleanup before deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "cleanup $APP_NAME || cleanup"
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "builds:prune $APP_NAME || true"
+
+      - name: Deploy Docker image to Dokku
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          docker save "$IMAGE_TAG" | \
+            timeout 1200s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+              "git:load-image $APP_NAME $IMAGE_TAG 'GitHub Actions' 'actions@github.com'"
+
+      - name: Normalize Dokku ports
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "ports:set $APP_NAME http:80:3000 https:443:3000"
+
+      - name: Verify HTTP health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 20 \
+              "http://$DOKKU_DOMAIN/health"; then
+              echo "HTTP healthcheck passed on attempt $attempt"
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 12 ]; then
+              sleep 10
+            fi
+          done
+
+          exit 1
+
+      - name: Enable Let's Encrypt certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          ssl_enabled="$(
+            timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+              "certs:report $APP_NAME --ssl-enabled" | tr -d '\r'
+          )"
+
+          if [ "$ssl_enabled" != "true" ]; then
+            timeout 180s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+              "letsencrypt:enable $APP_NAME || true"
+          fi
+
+      - name: Verify HTTPS health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 20 \
+              "https://$DOKKU_DOMAIN/health"; then
+              echo "HTTPS healthcheck passed on attempt $attempt"
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 12 ]; then
+              sleep 10
+            fi
+          done
+
+          exit 1
+
+      - name: Dokku cleanup after deploy
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/dokku
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "cleanup $APP_NAME || cleanup"
+
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "builds:prune $APP_NAME || true"

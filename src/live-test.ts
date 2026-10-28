@@ -8,6 +8,7 @@ import { GeminiLiveClient } from "./services/live/gemini-live-client.js";
 import { GeminiChunkClient } from "./services/live/gemini-chunk-client.js";
 import { LiveTradeStateManager } from "./services/live/state-manager.js";
 import { LiveAlertDispatcher } from "./services/notifications/alert-dispatcher.js";
+import { LiveStreamWorker } from "./services/live/stream-worker.js";
 import { LiveTradeSignal } from "./types/live-alert.js";
 
 dotenv.config();
@@ -259,6 +260,71 @@ async function main() {
   console.log(` ffmpeg:      ${ffmpegPath}`);
   console.log("=======================================================\n");
 
+  if (options.url) {
+    const worker = new LiveStreamWorker({
+      streamUrl: options.url,
+      mode: options.mode,
+      model: options.model,
+      verbose: options.verbose,
+      pushover: {
+        userKey: options.pushoverUser,
+        appToken: options.pushoverToken,
+        device: options.pushoverDevice,
+        emergency: options.emergency,
+        priority: options.priority,
+        sound: options.sound,
+      },
+      cookiesFromBrowser: options.cookiesFromBrowser,
+      cookiesFile: options.cookiesFile,
+    });
+
+    const cleanup = () => {
+      console.log("\n[Shutdown] Stopping live stream worker...");
+      worker.stop();
+      const metrics = worker.getMetrics();
+      console.log(
+        `[Summary] Ran for ${metrics.uptimeSeconds}s | Audio Processed: ${metrics.megabytesIngested} MB | Signals: ${metrics.signalsDetected}`
+      );
+      process.exit(0);
+    };
+
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
+
+    worker.on("status", (status) => {
+      if (options.verbose) {
+        console.log(`[LiveWorker Status] ${status}`);
+      }
+    });
+
+    worker.on("ended", (reason) => {
+      console.log(`\n[LiveWorker Ended] ${reason}`);
+      cleanup();
+    });
+
+    worker.on("error", (err) => {
+      console.error("\x1b[31m[LiveWorker Error]\x1b[0m", err.message || err);
+      cleanup();
+    });
+
+    try {
+      await worker.start();
+      console.log("[System] Listening for live trade calls... (Press Ctrl+C to stop)\n");
+
+      if (options.duration && options.duration > 0) {
+        setTimeout(() => {
+          console.log(`\n[Timer] Reached test duration limit of ${options.duration}s`);
+          cleanup();
+        }, options.duration * 1000);
+      }
+    } catch (err: any) {
+      console.error("\x1b[31m[Startup Error]\x1b[0m", err.message || err);
+      cleanup();
+    }
+    return;
+  }
+
+  // Microphone and Audio File testing pipeline
   const audioTap = new AudioTap({
     sampleRate: 16000,
     channels: 1,
@@ -292,16 +358,6 @@ async function main() {
   process.on("SIGTERM", cleanup);
 
   try {
-    let streamMediaUrl = "";
-    if (options.url) {
-      console.log("[AudioTap] Resolving YouTube stream URL...");
-      streamMediaUrl = await audioTap.resolveStreamUrl(options.url, {
-        cookiesFromBrowser: options.cookiesFromBrowser,
-        cookiesFile: options.cookiesFile,
-      });
-      console.log("[AudioTap] Stream URL resolved successfully!\n");
-    }
-
     if (options.mode === "live") {
       console.log("[GeminiLive] Initializing Option C: Gemini Multimodal Live API...");
       liveClient = new GeminiLiveClient({
@@ -367,9 +423,6 @@ async function main() {
     } else if (options.file) {
       console.log(`📁 [File Stream Active] Ingesting: "${options.file}"`);
       audioTap.startAudioFile(options.file);
-    } else {
-      console.log("[AudioTap] Starting ffmpeg YouTube audio ingestion...");
-      audioTap.start(streamMediaUrl);
       console.log("[System] Listening for live trade calls... (Press Ctrl+C to stop)\n");
     }
 

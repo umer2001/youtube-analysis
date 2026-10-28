@@ -3,6 +3,8 @@ import { EventEmitter } from "events";
 import fs from "fs";
 import path from "path";
 
+import os from "os";
+
 export interface AudioTapOptions {
   sampleRate?: number; // Default 16000
   channels?: number;   // Default 1 (mono)
@@ -11,62 +13,83 @@ export interface AudioTapOptions {
 }
 
 /**
- * Resolves paths to yt-dlp and ffmpeg binaries on the current OS.
+ * Resolves paths to yt-dlp and ffmpeg binaries across Windows, Linux, and Docker/Dokku containers.
  */
 export function resolveBinaryPaths(): { ytDlpPath: string; ffmpegPath: string } {
-  let ytDlpPath = "yt-dlp";
-  let ffmpegPath = "ffmpeg";
+  let ytDlpPath = process.env.YT_DLP_PATH || "yt-dlp";
+  let ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
 
-  // Check if yt-dlp is available in PATH
-  try {
-    execSync("where.exe yt-dlp", { stdio: "ignore" });
-  } catch {
-    // Check known Windows WinGet paths
-    const localAppData = process.env.LOCALAPPDATA || "";
-    const wingetBase = path.join(localAppData, "Microsoft", "WinGet", "Packages");
-    if (fs.existsSync(wingetBase)) {
-      const candidates = fs.readdirSync(wingetBase);
-      for (const candidate of candidates) {
-        if (candidate.startsWith("yt-dlp")) {
-          const directExe = path.join(wingetBase, candidate, "yt-dlp.exe");
-          if (fs.existsSync(directExe)) {
-            ytDlpPath = directExe;
-            break;
+  // Check explicit overrides or standard PATH first
+  if (process.platform === "win32") {
+    try {
+      execSync("where.exe yt-dlp", { stdio: "ignore" });
+    } catch {
+      const localAppData = process.env.LOCALAPPDATA || "";
+      const wingetBase = path.join(localAppData, "Microsoft", "WinGet", "Packages");
+      if (fs.existsSync(wingetBase)) {
+        const candidates = fs.readdirSync(wingetBase);
+        for (const candidate of candidates) {
+          if (candidate.startsWith("yt-dlp")) {
+            const directExe = path.join(wingetBase, candidate, "yt-dlp.exe");
+            if (fs.existsSync(directExe)) {
+              ytDlpPath = directExe;
+              break;
+            }
           }
         }
       }
     }
-  }
 
-  // Check if ffmpeg is available in PATH
-  try {
-    execSync("where.exe ffmpeg", { stdio: "ignore" });
-  } catch {
-    const localAppData = process.env.LOCALAPPDATA || "";
-    const wingetBase = path.join(localAppData, "Microsoft", "WinGet", "Packages");
-    if (fs.existsSync(wingetBase)) {
-      const candidates = fs.readdirSync(wingetBase);
-      for (const candidate of candidates) {
-        if (candidate.toLowerCase().includes("ffmpeg")) {
-          const binPath = path.join(wingetBase, candidate);
-          const findInDir = (dir: string): string | null => {
-            const items = fs.readdirSync(dir);
-            for (const item of items) {
-              const full = path.join(dir, item);
-              if (item.toLowerCase() === "ffmpeg.exe") return full;
-              if (fs.statSync(full).isDirectory()) {
-                const sub = findInDir(full);
-                if (sub) return sub;
+    try {
+      execSync("where.exe ffmpeg", { stdio: "ignore" });
+    } catch {
+      const localAppData = process.env.LOCALAPPDATA || "";
+      const wingetBase = path.join(localAppData, "Microsoft", "WinGet", "Packages");
+      if (fs.existsSync(wingetBase)) {
+        const candidates = fs.readdirSync(wingetBase);
+        for (const candidate of candidates) {
+          if (candidate.toLowerCase().includes("ffmpeg")) {
+            const binPath = path.join(wingetBase, candidate);
+            const findInDir = (dir: string): string | null => {
+              const items = fs.readdirSync(dir);
+              for (const item of items) {
+                const full = path.join(dir, item);
+                if (item.toLowerCase() === "ffmpeg.exe") return full;
+                if (fs.statSync(full).isDirectory()) {
+                  const sub = findInDir(full);
+                  if (sub) return sub;
+                }
               }
+              return null;
+            };
+            const found = findInDir(binPath);
+            if (found) {
+              ffmpegPath = found;
+              break;
             }
-            return null;
-          };
-          const found = findInDir(binPath);
-          if (found) {
-            ffmpegPath = found;
-            break;
           }
         }
+      }
+    }
+  } else {
+    // POSIX / Linux / Docker / Dokku
+    try {
+      execSync("which yt-dlp", { stdio: "ignore" });
+    } catch {
+      if (fs.existsSync("/usr/local/bin/yt-dlp")) {
+        ytDlpPath = "/usr/local/bin/yt-dlp";
+      } else if (fs.existsSync("/usr/bin/yt-dlp")) {
+        ytDlpPath = "/usr/bin/yt-dlp";
+      }
+    }
+
+    try {
+      execSync("which ffmpeg", { stdio: "ignore" });
+    } catch {
+      if (fs.existsSync("/usr/local/bin/ffmpeg")) {
+        ffmpegPath = "/usr/local/bin/ffmpeg";
+      } else if (fs.existsSync("/usr/bin/ffmpeg")) {
+        ffmpegPath = "/usr/bin/ffmpeg";
       }
     }
   }
@@ -75,9 +98,13 @@ export function resolveBinaryPaths(): { ytDlpPath: string; ffmpegPath: string } 
 }
 
 /**
- * Lists available DirectShow audio recording devices on Windows.
+ * Lists available audio recording devices (DirectShow on Windows).
  */
 export function listAudioDevices(): string[] {
+  if (process.platform !== "win32") {
+    // Microphone capture via DirectShow is Windows specific
+    return [];
+  }
   const { ffmpegPath } = resolveBinaryPaths();
   try {
     const output = execSync(`"${ffmpegPath}" -list_devices true -f dshow -i dummy 2>&1`, {
@@ -208,19 +235,45 @@ export class AudioTap extends EventEmitter {
       });
     };
 
+    // Resolve cookies file from options, environment, or temporary file
+    let effectiveCookiesFile = options.cookiesFile || process.env.COOKIES_FILE || process.env.YOUTUBE_COOKIES_FILE;
+    if (!effectiveCookiesFile && process.env.YOUTUBE_COOKIES) {
+      try {
+        let cookieContent = process.env.YOUTUBE_COOKIES.trim();
+        // Check if base64 encoded
+        if (!cookieContent.includes("\t") && !cookieContent.includes("\n") && cookieContent.length > 50) {
+          try {
+            const decoded = Buffer.from(cookieContent, "base64").toString("utf8");
+            if (decoded.includes("# Netscape") || decoded.includes(".youtube.com") || decoded.includes("\t")) {
+              cookieContent = decoded;
+            }
+          } catch {
+            // keep original
+          }
+        }
+        const tempPath = path.join(os.tmpdir(), `yt_cookies_${process.pid}.txt`);
+        fs.writeFileSync(tempPath, cookieContent, "utf8");
+        effectiveCookiesFile = tempPath;
+      } catch (err: any) {
+        if (this.verbose) {
+          console.warn("[AudioTap] Failed to write temporary cookies file:", err.message);
+        }
+      }
+    }
+
     // Strategy 1: Use Android/Web player client emulation (bypasses YouTube webpage 429 bot check)
     try {
       const extraArgs = ["--extractor-args", "youtube:player_client=android,web"];
       if (options.cookiesFromBrowser) extraArgs.push("--cookies-from-browser", options.cookiesFromBrowser);
-      if (options.cookiesFile) extraArgs.push("--cookies", options.cookiesFile);
+      if (effectiveCookiesFile) extraArgs.push("--cookies", effectiveCookiesFile);
       return await runExtraction(extraArgs);
     } catch (err: any) {
       if (this.verbose) {
         console.warn(`[AudioTap] Primary extraction failed: ${err.message}. Attempting browser cookies...`);
       }
 
-      // Strategy 2: If user hasn't specified cookies, try borrowing cookies from Chrome or Edge
-      if (!options.cookiesFromBrowser && !options.cookiesFile) {
+      // Strategy 2: In desktop environments (Windows/macOS), try borrowing cookies from Chrome or Edge
+      if (!options.cookiesFromBrowser && !effectiveCookiesFile && (process.platform === "win32" || process.platform === "darwin")) {
         try {
           return await runExtraction(["--cookies-from-browser", "chrome"]);
         } catch {
@@ -356,17 +409,27 @@ export class AudioTap extends EventEmitter {
   }
 
   /**
-   * Stops the active ffmpeg ingestion process.
+   * Stops the active ffmpeg ingestion process cleanly.
    */
   public stop(): void {
     if (this.ffmpegProcess) {
-      try {
-        this.ffmpegProcess.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
+      const proc = this.ffmpegProcess;
       this.ffmpegProcess = null;
       this.isRunning = false;
+
+      try {
+        if (process.platform === "win32" && proc.pid) {
+          execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: "ignore" });
+        } else {
+          proc.kill("SIGKILL");
+        }
+      } catch {
+        try {
+          proc.kill();
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 

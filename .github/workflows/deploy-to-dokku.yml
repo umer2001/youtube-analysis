@@ -235,8 +235,8 @@ jobs:
             -o ServerAliveCountMax=3
           )
 
-          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "ports:set $APP_NAME http:80:3000 https:443:3000"
+          timeout 120s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
+            "ports:set $APP_NAME http:80:3000" || true
 
       - name: Verify HTTP health endpoint
         shell: bash

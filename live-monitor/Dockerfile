@@ -1,7 +1,7 @@
 # Production Dockerfile for YouTube Financial Live Monitor
 # Ultra-lightweight Alpine container (~180MB vs 1.4GB) for resource-constrained Dokku VMs
 
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
 # Install ffmpeg, python3 (required by yt-dlp), curl, and ca-certificates
 RUN apk add --no-cache \

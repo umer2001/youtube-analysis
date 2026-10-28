@@ -1,3 +1,10 @@
+import WebSocket from "ws";
+
+// Ensure globalThis.WebSocket exists for @google/genai across all Node.js runtimes
+if (typeof (globalThis as any).WebSocket === "undefined") {
+  (globalThis as any).WebSocket = WebSocket;
+}
+
 import { loadConfig } from "./config.js";
 import { initSupabase } from "./db.js";
 import { StreamSupervisor } from "./supervisor.js";

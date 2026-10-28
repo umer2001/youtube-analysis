@@ -101,13 +101,14 @@ jobs:
           )
 
           # Create app if it does not already exist
-          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "apps:create $APP_NAME || true"
+          if ! ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "apps:exists $APP_NAME"; then
+            timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "apps:create $APP_NAME"
+          fi
 
           # Assign domain if specified
           if [ -n "$DOKKU_DOMAIN" ]; then
             timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-              "domains:set $APP_NAME $DOKKU_DOMAIN || true"
+              "domains:set $APP_NAME $DOKKU_DOMAIN" || true
           fi
 
       - name: Sync Dokku runtime config
@@ -181,10 +182,10 @@ jobs:
           )
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "builds:cancel $APP_NAME || true"
+            "builds:cancel $APP_NAME" || true
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "builds:prune $APP_NAME || true"
+            "builds:prune $APP_NAME" || true
 
       - name: Dokku cleanup before deploy
         shell: bash
@@ -200,10 +201,10 @@ jobs:
           )
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "cleanup $APP_NAME || cleanup"
+            "cleanup $APP_NAME" || timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "cleanup" || true
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "builds:prune $APP_NAME || true"
+            "builds:prune $APP_NAME" || true
 
       - name: Deploy Docker image to Dokku
         shell: bash
@@ -278,7 +279,7 @@ jobs:
 
           if [ "$ssl_enabled" != "true" ]; then
             timeout 180s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-              "letsencrypt:enable $APP_NAME || true"
+              "letsencrypt:enable $APP_NAME" || true
           fi
 
       - name: Verify HTTPS health endpoint
@@ -316,7 +317,7 @@ jobs:
           )
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "cleanup $APP_NAME || cleanup"
+            "cleanup $APP_NAME" || timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "cleanup" || true
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "builds:prune $APP_NAME || true"
+            "builds:prune $APP_NAME" || true

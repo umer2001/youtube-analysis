@@ -1,45 +1,43 @@
 # Production Dockerfile for YouTube Financial Live Monitor
-# Designed for deployment on Dokku / Linux VM with yt-dlp, ffmpeg & Node.js
+# Ultra-lightweight Alpine container (~180MB vs 1.4GB) for resource-constrained Dokku VMs
 
-FROM node:20-bookworm-slim AS base
+FROM node:20-alpine AS base
 
-# Install system dependencies: ffmpeg, python3, ca-certificates, and curl
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install ffmpeg, python3 (required by yt-dlp), curl, and ca-certificates
+RUN apk add --no-cache \
     ffmpeg \
     python3 \
-    ca-certificates \
     curl \
-  && rm -rf /var/lib/apt/lists/*
+    ca-certificates
 
 # Install latest yt-dlp binary directly
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
   && chmod a+rx /usr/local/bin/yt-dlp
 
-# Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
-
 WORKDIR /app
 
 # Stage 1: Dependencies & Build
 FROM base AS builder
+WORKDIR /app
 
-COPY package.json pnpm-lock.yaml* ./
+RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
+
+COPY package.json pnpm-lock.yaml* tsconfig.json ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
-COPY tsconfig.json ./
 COPY src/ ./src/
-
 RUN pnpm build
 
 # Stage 2: Production Runner
 FROM base AS runner
-
 WORKDIR /app
+
 ENV NODE_ENV=production
 ENV PORT=3000
 
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --prod --frozen-lockfile || pnpm install --prod
+# Install production dependencies cleanly without pnpm store overhead
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 

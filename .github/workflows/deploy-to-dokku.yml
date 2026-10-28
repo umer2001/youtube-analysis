@@ -200,8 +200,7 @@ jobs:
             -o ServerAliveCountMax=3
           )
 
-          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "cleanup $APP_NAME" || timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "cleanup" || true
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "cleanup" || true
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
             "builds:prune $APP_NAME" || true
@@ -316,8 +315,7 @@ jobs:
             -o ServerAliveCountMax=3
           )
 
-          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
-            "cleanup $APP_NAME" || timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "cleanup" || true
+          timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" "cleanup" || true
 
           timeout 60s ssh "${SSH_OPTS[@]}" "dokku@$DOKKU_HOST" \
             "builds:prune $APP_NAME" || true

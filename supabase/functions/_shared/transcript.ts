@@ -83,25 +83,12 @@ function parseTranscriptXml(
   }));
 }
 
-const DEFAULT_PROXIES = [
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-  "REDACTED_PROXY_URL",
-];
-
-function getProxyList(): string[] {
+export function getProxyList(): string[] {
   const envProxies = Deno.env.get("WEBSHARE_PROXIES");
   if (envProxies) {
     return envProxies.split(",").map((p) => p.trim()).filter(Boolean);
   }
-  return DEFAULT_PROXIES;
+  return [];
 }
 
 export function extractCaptionTracks(html: string): any[] | null {

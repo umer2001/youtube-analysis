@@ -78,7 +78,11 @@ async function main() {
   const videoIdIdx = args.indexOf("--videoId");
   const videoId = videoIdIdx !== -1 && args[videoIdIdx + 1] ? args[videoIdIdx + 1] : undefined;
 
-  const supabaseUrl = process.env.SUPABASE_URL || "https://REDACTED_SUPABASE_PROJECT_ID.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL;
+  if (!supabaseUrl) {
+    console.error("❌ SUPABASE_URL is not set in environment. Please update your .env file.");
+    process.exit(1);
+  }
   const params = new URLSearchParams();
   if (action) params.set("action", action);
   if (limit) params.set("limit", limit.toString());

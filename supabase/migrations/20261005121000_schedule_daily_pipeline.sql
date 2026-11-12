@@ -19,7 +19,7 @@ BEGIN
       '0 0 * * *',
       $cron$
       SELECT net.http_post(
-        url := 'https://REDACTED_SUPABASE_PROJECT_ID.supabase.co/functions/v1/daily-pipeline',
+        url := 'https://<your-project-ref>.supabase.co/functions/v1/daily-pipeline',
         headers := '{"Content-Type": "application/json"}'::jsonb,
         body := '{"action": "all"}'::jsonb
       );

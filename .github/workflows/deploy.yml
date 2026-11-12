@@ -12,12 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || secrets.SUPABASE_PROJECT_ID || 'REDACTED_SUPABASE_PROJECT_ID' }}
+      SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DATABASE_PASSWORD || secrets.SUPABASE_DB_PASSWORD }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_BATCH_MODEL: ${{ vars.OPENROUTER_BATCH_MODEL || 'xiaomi/mimo-v2.6-pro' }}
       YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      WEBSHARE_PROXIES: ${{ secrets.WEBSHARE_PROXIES }}
 
     steps:
       - name: Checkout repository
@@ -36,6 +37,7 @@ jobs:
           if [ -n "$OPENROUTER_BATCH_MODEL" ]; then echo "OPENROUTER_BATCH_MODEL=$OPENROUTER_BATCH_MODEL" >> ./supabase/.env; fi
           if [ -n "$YOUTUBE_API_KEY" ]; then echo "YOUTUBE_API_KEY=$YOUTUBE_API_KEY" >> ./supabase/.env; fi
           if [ -n "$GEMINI_API_KEY" ]; then echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> ./supabase/.env; fi
+          if [ -n "$WEBSHARE_PROXIES" ]; then echo "WEBSHARE_PROXIES=$WEBSHARE_PROXIES" >> ./supabase/.env; fi
 
       - name: Deploy Supabase migrations & functions
         run: |
@@ -53,7 +55,8 @@ jobs:
       contents: read
       checks: write
     env:
-      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'REDACTED_FIREBASE_PROJECT_ID' }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      FIREBASE_HOSTING_SITE: ${{ vars.FIREBASE_HOSTING_SITE || 'yt-analysis' }}
 
     steps:
       - name: Checkout repository
@@ -75,8 +78,27 @@ jobs:
       - name: Build frontend
         run: pnpm --dir admin build
         env:
-          VITE_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_ID || 'REDACTED_SUPABASE_PROJECT_ID' }}.supabase.co
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'REDACTED_SUPABASE_ANON_KEY' }}
+          VITE_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_ID }}.supabase.co
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Configure Firebase target mapping
+        run: |
+          cat <<EOF > ./admin/.firebaserc
+          {
+            "projects": {
+              "default": "$FIREBASE_PROJECT_ID"
+            },
+            "targets": {
+              "$FIREBASE_PROJECT_ID": {
+                "hosting": {
+                  "admin": [
+                    "$FIREBASE_HOSTING_SITE"
+                  ]
+                }
+              }
+            }
+          }
+          EOF
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
@@ -84,6 +106,6 @@ jobs:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0003495071 }}
           channelId: live
-          projectId: REDACTED_FIREBASE_PROJECT_ID
+          projectId: ${{ env.FIREBASE_PROJECT_ID }}
           target: admin
           entryPoint: ./admin

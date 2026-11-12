@@ -54,7 +54,7 @@ async function main() {
     console.error(`\n⚠️ Missing SUPABASE_SERVICE_ROLE_KEY in .env!`);
     console.error(`Adding, enabling, or disabling channels requires the Supabase service_role key to bypass Row Level Security (RLS).`);
     console.error(`👉 Get your service_role key from your Supabase Dashboard:`);
-    console.error(`   https://supabase.com/dashboard/project/REDACTED_SUPABASE_PROJECT_ID/settings/api`);
+    console.error(`   https://supabase.com/dashboard/project/<your-project-ref>/settings/api`);
     console.error(`   And paste it into .env:`);
     console.error(`   SUPABASE_SERVICE_ROLE_KEY=eyJ...\n`);
     process.exit(1);

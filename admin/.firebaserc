@@ -1,9 +1,9 @@
 {
   "projects": {
-    "default": "REDACTED_FIREBASE_PROJECT_ID"
+    "default": "your-firebase-project-id"
   },
   "targets": {
-    "REDACTED_FIREBASE_PROJECT_ID": {
+    "your-firebase-project-id": {
       "hosting": {
         "admin": [
           "yt-analysis"

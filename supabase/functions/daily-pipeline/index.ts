@@ -5,6 +5,7 @@ import { fetchCompletedLivestreams } from "./_shared/youtube.ts";
 import {
   getFormattedTranscript,
   extractCaptionTracks,
+  getProxyList,
 } from "./_shared/transcript.ts";
 import {
   buildTradeExtractionPrompt,
@@ -109,11 +110,7 @@ Deno.serve(async (req: Request) => {
 
       // Test 2: InnerTube via Webshare Proxies
       results.proxy_innertube = [];
-      const testProxies = [
-        "REDACTED_PROXY_URL",
-        "REDACTED_PROXY_URL",
-        "REDACTED_PROXY_URL",
-      ];
+      const testProxies = getProxyList().slice(0, 3);
 
       for (const pUrl of testProxies) {
         const proxyLabel = pUrl.split("@")[1];
@@ -215,7 +212,13 @@ Deno.serve(async (req: Request) => {
 
     if (action === "debug_proxy") {
       const debugInfo: any = {};
-      const proxyUrl = "REDACTED_PROXY_URL";
+      const proxyUrl = url.searchParams.get("proxy") || getProxyList()[0];
+      if (!proxyUrl) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "No WEBSHARE_PROXIES configured in environment." }, null, 2),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       debugInfo.hasCreateHttpClient = typeof (Deno as any).createHttpClient === "function";
       debugInfo.hasDenoConnect = typeof (Deno as any).connect === "function";
 
@@ -231,7 +234,11 @@ Deno.serve(async (req: Request) => {
 
       if (debugInfo.hasDenoConnect) {
         try {
-          const conn = await (Deno as any).connect({ hostname: "REDACTED_PROXY_IP", port: 6095 });
+          const parsedProxy = new URL(proxyUrl);
+          const conn = await (Deno as any).connect({
+            hostname: parsedProxy.hostname,
+            port: parseInt(parsedProxy.port || "80", 10),
+          });
           debugInfo.rawTcpConnected = true;
           conn.close();
         } catch (err: any) {

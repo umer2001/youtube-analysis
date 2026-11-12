@@ -45,8 +45,8 @@ jobs:
           if [ -s ./supabase/.env ]; then
             supabase secrets set --env-file ./supabase/.env --yes
           fi
-          supabase db push --password "$SUPABASE_DB_PASSWORD" --yes
-          supabase functions deploy daily-pipeline --no-verify-jwt --yes
+          supabase db push --remote --password "$SUPABASE_DB_PASSWORD" --yes
+          supabase functions deploy daily-pipeline --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt --yes
 
   deploy-frontend:
     name: Deploy Admin to Firebase Hosting

@@ -4,6 +4,7 @@ import React from "react";
 import { type BaseKey, useDeleteButton } from "@refinedev/core";
 import { Loader2, Trash } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isGuestSession } from "@/providers/auth";
 import {
   Popover,
   PopoverContent,
@@ -57,7 +58,7 @@ export const DeleteButton = React.forwardRef<
   const [open, setOpen] = React.useState(false);
 
   const isDisabled = disabled || rest.disabled || loading;
-  const isHidden = hidden || rest.hidden;
+  const isHidden = hidden || rest.hidden || isGuestSession();
 
   if (isHidden) return null;
 

@@ -4,6 +4,7 @@ import React from "react";
 import { type BaseKey, useEditButton } from "@refinedev/core";
 import { Button } from "@/components/ui/button";
 import { Pencil } from "lucide-react";
+import { isGuestSession } from "@/providers/auth";
 
 type EditButtonProps = {
   /**
@@ -46,7 +47,7 @@ export const EditButton = React.forwardRef<
     });
 
     const isDisabled = disabled || rest.disabled;
-    const isHidden = hidden || rest.hidden;
+    const isHidden = hidden || rest.hidden || isGuestSession();
 
     if (isHidden) return null;
 

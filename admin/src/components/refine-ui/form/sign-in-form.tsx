@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { CircleHelp } from "lucide-react";
+import { CircleHelp, Eye } from "lucide-react";
 
 import { useLogin, useRefineOptions, useLink } from "@refinedev/core";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,12 @@ export const SignInForm = () => {
   const handleSignInWithGitHub = () => {
     login({
       providerName: "github",
+    });
+  };
+
+  const handleContinueAsGuest = () => {
+    login({
+      isGuest: true,
     });
   };
 
@@ -159,6 +165,17 @@ export const SignInForm = () => {
               Sign in
             </Button>
 
+            <Button
+              type="button"
+              variant="secondary"
+              size="lg"
+              className={cn("w-full", "mt-3", "gap-2", "font-medium")}
+              onClick={handleContinueAsGuest}
+            >
+              <Eye className={cn("w-4", "h-4")} />
+              <span>Continue as Guest (Read-Only)</span>
+            </Button>
+
             <div className={cn("flex", "items-center", "gap-4", "mt-6")}>
               <Separator className={cn("flex-1")} />
               <span className={cn("text-sm", "text-muted-foreground")}>or</span>
@@ -216,6 +233,7 @@ export const SignInForm = () => {
           </form>
         </CardContent>
 
+        {/* Sign up link hidden:
         <Separator />
 
         <CardFooter>
@@ -236,6 +254,7 @@ export const SignInForm = () => {
             </Link>
           </div>
         </CardFooter>
+        */}
       </Card>
     </div>
   );

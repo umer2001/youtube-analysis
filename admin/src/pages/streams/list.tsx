@@ -37,10 +37,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ComplexFilterBar, type FilterFieldConfig } from "@/components/complex-filter";
 import { supabaseClient } from "@/providers/supabase-client";
+import { isGuestSession } from "@/providers/auth";
 import type { Stream, Channel } from "@/types";
 
 export const StreamList = () => {
   const navigate = useNavigate();
+  const isGuest = isGuestSession();
   const [searchParams] = useSearchParams();
   const channelFilterParam = searchParams.get("channel_id") || "all";
 
@@ -63,35 +65,39 @@ export const StreamList = () => {
     const columnHelper = createColumnHelper<Stream>();
 
     return [
-      // Checkbox selection column
-      columnHelper.display({
-        id: "select",
-        header: ({ table }) => (
-          <div className="flex items-center justify-center pl-2">
-            <Checkbox
-              checked={
-                table.getIsAllPageRowsSelected() ||
-                (table.getIsSomePageRowsSelected() && "indeterminate")
-              }
-              onCheckedChange={(val) => table.toggleAllPageRowsSelected(!!val)}
-              aria-label="Select all streams on page"
-              className="translate-y-[1px]"
-            />
-          </div>
-        ),
-        cell: ({ row }) => (
-          <div className="flex items-center justify-center pl-2">
-            <Checkbox
-              checked={row.getIsSelected()}
-              onCheckedChange={(val) => row.toggleSelected(!!val)}
-              aria-label="Select stream row"
-              className="translate-y-[1px]"
-            />
-          </div>
-        ),
-        enableSorting: false,
-        size: 40,
-      }),
+      // Checkbox selection column (hidden for read-only guest)
+      ...(!isGuest
+        ? [
+            columnHelper.display({
+              id: "select",
+              header: ({ table }) => (
+                <div className="flex items-center justify-center pl-2">
+                  <Checkbox
+                    checked={
+                      table.getIsAllPageRowsSelected() ||
+                      (table.getIsSomePageRowsSelected() && "indeterminate")
+                    }
+                    onCheckedChange={(val) => table.toggleAllPageRowsSelected(!!val)}
+                    aria-label="Select all streams on page"
+                    className="translate-y-[1px]"
+                  />
+                </div>
+              ),
+              cell: ({ row }) => (
+                <div className="flex items-center justify-center pl-2">
+                  <Checkbox
+                    checked={row.getIsSelected()}
+                    onCheckedChange={(val) => row.toggleSelected(!!val)}
+                    aria-label="Select stream row"
+                    className="translate-y-[1px]"
+                  />
+                </div>
+              ),
+              enableSorting: false,
+              size: 40,
+            }),
+          ]
+        : []),
 
       columnHelper.display({
         id: "stream",
@@ -296,22 +302,24 @@ export const StreamList = () => {
               <span>View & Analyze</span>
             </Button>
 
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              onClick={() => setStreamToDelete(row.original)}
-              title="Delete stream and associated trades"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            {!isGuest && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                onClick={() => setStreamToDelete(row.original)}
+                title="Delete stream and associated trades"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         ),
         enableSorting: false,
         size: 170,
       }),
     ];
-  }, [navigate]);
+  }, [navigate, isGuest]);
 
   // Initial filter from query param
   const initialFilters = useMemo(() => {

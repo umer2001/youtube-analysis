@@ -4,6 +4,7 @@ import React from "react";
 import { type BaseKey, useCreateButton } from "@refinedev/core";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isGuestSession } from "@/providers/auth";
 
 type CreateButtonProps = {
   /**
@@ -36,7 +37,7 @@ export const CreateButton = React.forwardRef<
   });
 
   const isDisabled = disabled || rest.disabled;
-  const isHidden = hidden || rest.hidden;
+  const isHidden = hidden || rest.hidden || isGuestSession();
 
   if (isHidden) return null;
 

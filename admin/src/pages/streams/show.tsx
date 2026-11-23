@@ -62,9 +62,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Stream, Channel, Trade, TradeSide, TradeResult } from "@/types";
+import { isGuestSession } from "@/providers/auth";
 
 export const StreamShow = () => {
   const navigate = useNavigate();
+  const isGuest = isGuestSession();
   const playerRef = useRef<YouTubePlayerHandle>(null);
 
   const [activeTimestamp, setActiveTimestamp] = useState<string | null>(null);
@@ -558,27 +560,31 @@ export const StreamShow = () => {
                               {trade.result}
                             </Badge>
 
-                            {/* Edit Button */}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                              onClick={() => handleOpenEdit(trade)}
-                              title="Edit trade"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
+                            {!isGuest && (
+                              <>
+                                {/* Edit Button */}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                                  onClick={() => handleOpenEdit(trade)}
+                                  title="Edit trade"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
 
-                            {/* Delete Button */}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10"
-                              onClick={() => setTradeToDelete(trade)}
-                              title="Delete trade"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                                {/* Delete Button */}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10"
+                                  onClick={() => setTradeToDelete(trade)}
+                                  title="Delete trade"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </div>
 

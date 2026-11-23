@@ -1,11 +1,26 @@
 import { AuthProvider } from "@refinedev/core";
 import { supabaseClient } from "./supabase-client";
 
+const GUEST_STORAGE_KEY = "yt_analysis_guest_mode";
+
+export const isGuestSession = (): boolean => {
+  return typeof window !== "undefined" && localStorage.getItem(GUEST_STORAGE_KEY) === "true";
+};
+
 const authProvider: AuthProvider = {
-  login: async ({ email, password, providerName }) => {
-    // sign in with oauth
+  login: async ({ email, password, providerName, isGuest }) => {
     try {
+      if (isGuest) {
+        localStorage.setItem(GUEST_STORAGE_KEY, "true");
+        return {
+          success: true,
+          redirectTo: "/",
+        };
+      }
+
+      // sign in with oauth
       if (providerName) {
+        localStorage.removeItem(GUEST_STORAGE_KEY);
         const { data, error } = await supabaseClient.auth.signInWithOAuth({
           provider: providerName,
         });
@@ -39,6 +54,7 @@ const authProvider: AuthProvider = {
       }
 
       if (data?.user) {
+        localStorage.removeItem(GUEST_STORAGE_KEY);
         return {
           success: true,
           redirectTo: "/",
@@ -164,6 +180,7 @@ const authProvider: AuthProvider = {
     };
   },
   logout: async () => {
+    localStorage.removeItem(GUEST_STORAGE_KEY);
     const { error } = await supabaseClient.auth.signOut();
 
     if (error) {
@@ -175,7 +192,7 @@ const authProvider: AuthProvider = {
 
     return {
       success: true,
-      redirectTo: "/",
+      redirectTo: "/login",
     };
   },
   onError: async (error) => {
@@ -187,18 +204,34 @@ const authProvider: AuthProvider = {
       const { data } = await supabaseClient.auth.getSession();
       const { session } = data;
 
-      if (!session) {
+      if (session) {
         return {
-          authenticated: false,
-          error: {
-            message: "Check failed",
-            name: "Session not found",
-          },
-          logout: true,
-          redirectTo: "/login",
+          authenticated: true,
         };
       }
+
+      if (isGuestSession()) {
+        return {
+          authenticated: true,
+        };
+      }
+
+      return {
+        authenticated: false,
+        error: {
+          message: "Check failed",
+          name: "Session not found",
+        },
+        logout: true,
+        redirectTo: "/login",
+      };
     } catch (error: any) {
+      if (isGuestSession()) {
+        return {
+          authenticated: true,
+        };
+      }
+
       return {
         authenticated: false,
         error: error || {
@@ -209,27 +242,42 @@ const authProvider: AuthProvider = {
         redirectTo: "/login",
       };
     }
-
-    return {
-      authenticated: true,
-    };
   },
   getPermissions: async () => {
-    const user = await supabaseClient.auth.getUser();
+    const { data } = await supabaseClient.auth.getSession();
 
-    if (user) {
-      return user.data.user?.role;
+    if (data?.session?.user) {
+      return data.session.user.role;
+    }
+
+    if (isGuestSession()) {
+      return "guest";
     }
 
     return null;
   },
   getIdentity: async () => {
-    const { data } = await supabaseClient.auth.getUser();
+    const { data } = await supabaseClient.auth.getSession();
 
-    if (data?.user) {
+    if (data?.session?.user) {
+      const user = data.session.user;
       return {
-        ...data.user,
-        name: data.user.email,
+        ...user,
+        name: user.email,
+        fullName: user.email || "Admin",
+        firstName: "Admin",
+        lastName: "",
+      };
+    }
+
+    if (isGuestSession()) {
+      return {
+        id: "guest",
+        name: "Guest (Read-Only)",
+        fullName: "Guest User",
+        firstName: "Guest",
+        lastName: "(Read-Only)",
+        email: "Read-only access",
       };
     }
 

@@ -41,6 +41,7 @@ export const SignInForm = () => {
     });
   };
 
+  /* OAuth sign-in handlers hidden:
   const handleSignInWithGoogle = () => {
     login({
       providerName: "google",
@@ -52,6 +53,7 @@ export const SignInForm = () => {
       providerName: "github",
     });
   };
+  */
 
   const handleContinueAsGuest = () => {
     login({
@@ -176,6 +178,7 @@ export const SignInForm = () => {
               <span>Continue as Guest (Read-Only)</span>
             </Button>
 
+            {/* OAuth sign-in options hidden:
             <div className={cn("flex", "items-center", "gap-4", "mt-6")}>
               <Separator className={cn("flex-1")} />
               <span className={cn("text-sm", "text-muted-foreground")}>or</span>
@@ -230,6 +233,7 @@ export const SignInForm = () => {
                 </Button>
               </div>
             </div>
+            */}
           </form>
         </CardContent>
 
